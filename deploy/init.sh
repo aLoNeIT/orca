@@ -36,7 +36,7 @@ esac
 
 # ---------- 2. 已有 .env 保护 ----------
 if [ -f .env ]; then
-  echo "⚠ .env 已存在，重新生成会覆盖其中的配置（数据卷中的账号与密钥不受影响）。"
+  echo "⚠ .env 已存在，重新生成会覆盖其中的配置（data/ 目录中的账号与密钥不受影响）。"
   read -r -p "确认覆盖？输入 yes 继续: " CONFIRM
   if [ "${CONFIRM}" != "yes" ]; then
     echo "已取消。"
@@ -54,7 +54,16 @@ rand_hex() {
 }
 ASSIGNMENT_KEY="$(rand_hex)"
 
-# ---------- 4. 写 .env（权限 600） ----------
+# ---------- 4. 数据目录（SQLite / 密钥 / 证书直接落盘，便于查看与备份） ----------
+DATA_DIR="./data"
+mkdir -p "${DATA_DIR}/auth" "${DATA_DIR}/relay" "${DATA_DIR}/caddy" "${DATA_DIR}/caddy-config"
+# 容器内以 node 用户（uid 1000）运行；Linux 上若以 root 执行初始化则预置归属，
+# 非 root 也无妨：容器启动时会自行修复绑定目录的归属。
+if [ "$(id -u)" = "0" ]; then
+  chown -R 1000:1000 "${DATA_DIR}/auth" "${DATA_DIR}/relay" 2>/dev/null || true
+fi
+
+# ---------- 5. 写 .env（权限 600） ----------
 cat > .env <<EOF
 # Orca 自托管部署配置（由 init.sh 生成）
 # ⚠ 本文件含密钥，勿提交到 git / 勿外发。
@@ -65,6 +74,11 @@ ORCA_RELAY_PUBLIC_URL=https://${DOMAIN}
 
 # relay 的 assignment 签名密钥（≥32 字节 hex）
 ORCA_RELAY_ASSIGNMENT_SIGNING_KEY=${ASSIGNMENT_KEY}
+
+# 数据目录（两个 SQLite 库 / auth 签名密钥 / HTTPS 证书都落在这里）
+# 相对路径基于本目录（默认 ./data），也可改为绝对路径（如 /srv/orca/data）；
+# 备份 = 直接打包复制该目录。
+ORCA_DATA_DIR=./data
 
 # 镜像名（compose 直接引用，不做本地编译；构建用 ./build.sh）
 # 可改为私有仓库完整地址，例如：
@@ -82,7 +96,7 @@ ORCA_AUTH_IMAGE=orca-auth:latest
 EOF
 chmod 600 .env
 
-# ---------- 5. 完成提示 ----------
+# ---------- 6. 完成提示 ----------
 echo ""
 echo "✔ 初始化完成：deploy/.env 已生成（域名 ${DOMAIN}）"
 echo ""
@@ -97,6 +111,10 @@ echo "  4. 等待证书签发（约 10-30 秒），验证："
 echo "       curl https://${DOMAIN}/.well-known/jwks.json"
 echo "  5. 给成员建号（自动生成初始密码 + 交付信息，可直接转发）："
 echo "       ./orca-auth user add --email alice@team.com --name \"李静\""
+echo ""
+echo "数据与备份："
+echo "  数据目录：deploy/data/（两个 SQLite 库、auth 密钥、HTTPS 证书均可直接查看）"
+echo "  备份：    tar czf orca-data-\$(date +%F).tgz data/"
 echo ""
 echo "常用命令："
 echo "  ./orca-auth user list                 查看用户"

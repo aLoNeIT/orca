@@ -10,7 +10,8 @@
 #   3. docker compose up -d          启动（本文件不含 build，只拉/用已有镜像）
 #   4. ./orca-auth user add --email alice@team.com --name "李静"   建号
 # 升级：docker compose pull && docker compose up -d（或重新 build.sh 后 up -d）
-# 备份：volumes（relay-data / auth-data / caddy-data）。
+# 备份：data/ 目录（ORCA_DATA_DIR，含两个 SQLite 库、auth 密钥与证书），直接打包复制即可：
+#   tar czf orca-data-$(date +%F).tgz data/
 
 name: orca
 
@@ -34,7 +35,9 @@ services:
       # ORCA_RELAY_REGION: us-central1        # 可选：区域标识（默认 us-central1）
       # ORCA_RELAY_CELL_CAPACITY: "900"       # 可选：容量（默认 900，10 人规模无需调整）
     volumes:
-      - relay-data:/data/relay
+      # 数据目录：ORCA_DATA_DIR 可配（相对路径基于本目录），默认 ./data；
+      # SQLite（orca-relay.sqlite）直接落在宿主机可见的目录里
+      - ${ORCA_DATA_DIR:-./data}/relay:/data/relay
     depends_on:
       - auth
     # 调试端口（仅本机回环）。需要时取消注释：
@@ -56,8 +59,10 @@ services:
       ORCA_AUTH_ORG_ID: ${ORCA_AUTH_ORG_ID:-team}
       ORCA_AUTH_ORG_NAME: ${ORCA_AUTH_ORG_NAME:-Team}
     volumes:
-      - auth-data:/data/auth
-      - relay-data:/data/relay:ro
+      # 账号数据（auth.sqlite / 签名密钥 / 交付信息存档）——落宿主机 data/auth
+      - ${ORCA_DATA_DIR:-./data}/auth:/data/auth
+      # CLI（device list）只读读 relay 库
+      - ${ORCA_DATA_DIR:-./data}/relay:/data/relay:ro
     restart: unless-stopped
 
   caddy:
@@ -71,12 +76,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      # 证书与 ACME 状态（caddy 是根运行的官方镜像，直接绑定）
+      - ${ORCA_DATA_DIR:-./data}/caddy:/data
+      - ${ORCA_DATA_DIR:-./data}/caddy-config:/config
     restart: unless-stopped
-
-volumes:
-  relay-data:
-  auth-data:
-  caddy-data:
-  caddy-config:
