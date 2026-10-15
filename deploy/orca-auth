@@ -13,4 +13,12 @@
 #   任意命令加 --json 输出机器可读结果
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# Git Bash / MSYS（Git for Windows 等）会把 "/app/..." 参数误转成 Windows 本地路径，
+# 例如 /app/auth/cli.mjs → <Git安装目录>/app/auth/cli.mjs，导致容器内找不到模块。
+# MSYSTEM 仅由 Git Bash / MSYS 环境设置，Linux/macOS 不受影响。
+if [ -n "${MSYSTEM:-}" ]; then
+  export MSYS_NO_PATHCONV=1
+fi
+
 exec docker compose exec -T auth node /app/auth/cli.mjs "$@"
