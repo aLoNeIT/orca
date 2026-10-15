@@ -1,0 +1,19 @@
+# Orca Auth 镜像（自研多用户认证服务，零 npm 依赖、零编译步骤，复制即运行）。
+#
+# 构建（在 deploy/ 目录，或直接用 ./build.sh）：
+#   docker build -f Dockerfile.auth -t orca-auth:latest ../auth
+# （构建上下文就是 auth/ 目录：lib.mjs / server.mjs / cli.mjs 三个文件）
+
+FROM node:24-alpine
+WORKDIR /app
+RUN apk add --no-cache su-exec
+ENV NODE_ENV=production \
+    PORT=8080 \
+    AUTH_DATA_DIR=/data/auth \
+    ORCA_RELAY_DATA_DIR=/data/relay
+# 契约服务 + 管理 CLI（node /app/auth/cli.mjs ...）
+COPY . /app/auth
+EXPOSE 8080
+# 数据卷以 root 挂载：入口先确保目录归属 node，再降权运行
+# （--disable-warning=ExperimentalWarning 关闭 node:sqlite 的实验性提示）
+CMD ["sh", "-c", "mkdir -p /data/auth && chown -R node:node /data/auth && exec su-exec node node --disable-warning=ExperimentalWarning /app/auth/server.mjs"]

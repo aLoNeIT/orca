@@ -1,19 +1,18 @@
 // Orca 自托管 Auth 契约服务（零 npm 依赖）。
 //
-// 一个公网端口承担四件事：
+// 一个端口承担四件事：
 //   /.well-known/jwks.json   ES256 公钥（relay 验签 + 浏览器）
 //   /v1/desktop/auth/*       官方桌面客户端契约端点（authorize/session/refresh/.../relay-token）
 //   /account                 用户自助改密页
-//   其余请求（HTTP + WebSocket）→ 反向代理到 loopback 上的 relay 子进程
+//   其余请求（HTTP + WebSocket）→ 反向代理到独立运行的 relay（RELAY_UPSTREAM，默认 127.0.0.1:8081）
 //
+// 部署形态：relay 与 auth 是两个独立镜像/容器（见 deploy/docker-compose.yml），
+// 本服务不拉起 relay 子进程，只做反代（compose 中 RELAY_UPSTREAM=relay:8080）。
 // 管理能力收敛在 cli.mjs（无任何对外的 admin HTTP 接口）。
 // 契约来源：桌面客户端 profile-cloud-client.ts / relay-http-client.ts，relay 侧 relay-token-verifier.ts。
 
-import { spawn } from 'node:child_process'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
-import { existsSync, mkdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import * as lib from './lib.mjs'
 
 // ============================== 初始化 ==============================
@@ -21,7 +20,6 @@ import * as lib from './lib.mjs'
 const cfg = lib.loadConfig()
 const db = lib.openDb(cfg.authDir)
 const signingKey = lib.loadOrCreateSigningKey(cfg.authDir)
-const assignmentKey = lib.resolveAssignmentKey(cfg)
 
 const TTL_SEC = {
   access: 60 * 60,              // 1 小时
@@ -37,63 +35,17 @@ const DUMMY_HASH = lib.hashPassword('timing-equalizer-dummy-password')
 console.log(`[auth] public origin: ${cfg.publicUrl}`)
 console.log(`[auth] data dir: ${cfg.authDir}, relay data dir: ${cfg.relayDataDir}`)
 
-// ============================== relay 子进程 ==============================
+// ============================== relay 上游（独立容器/进程） ==============================
 
-let relay = null
-let stopping = false
-let restartDelayMs = 1000
-
-const relayEntry = process.env.ORCA_RELAY_ENTRY || fileURLToPath(new URL('../apps/relay/dist/index.js', import.meta.url))
-
-function relayEnv() {
-  return {
-    ...process.env,
-    PORT: String(cfg.relayPort),
-    NODE_ENV: 'production',
-    ORCA_RELAY_ROLE: 'combined',
-    ORCA_RELAY_PUBLIC_URL: cfg.publicUrl,
-    ORCA_RELAY_CELL_URL: cfg.publicUrl,
-    ORCA_RELAY_AUTH_ISSUER: cfg.publicUrl,
-    ORCA_RELAY_AUTH_AUDIENCE: 'orca-relay',
-    ORCA_RELAY_JWKS_URL: `http://127.0.0.1:${cfg.port}/.well-known/jwks.json`,
-    ORCA_RELAY_ASSIGNMENT_SIGNING_KEY: assignmentKey,
-    // 占位值：官方 Google 身份校验的 admin 路由保持不可用（本部署不用官方运维功能）
-    ORCA_RELAY_ADMIN_AUDIENCE: 'https://admin.invalid',
-    ORCA_RELAY_DEPLOY_SERVICE_ACCOUNT: 'nobody@invalid.example',
-    ORCA_RELAY_DATA_DIR: cfg.relayDataDir
-  }
-}
-
-function startRelay() {
-  if (!existsSync(relayEntry)) {
-    console.warn(`[auth] relay 入口不存在（${relayEntry}），跳过启动。仅契约端点可用（开发/冒烟测试模式）。`)
-    return
-  }
-  mkdirSync(cfg.relayDataDir, { recursive: true })
-  const startedAt = Date.now()
-  relay = spawn(process.execPath, [relayEntry], { stdio: 'inherit', env: relayEnv() })
-  relay.on('error', (error) => console.error('[auth] relay 启动失败:', error.message))
-  relay.on('exit', (code, signal) => {
-    if (stopping) return
-    if (Date.now() - startedAt < 10_000) restartDelayMs = Math.min(restartDelayMs * 2, 30_000)
-    else restartDelayMs = 1000
-    console.error(`[auth] relay 退出（code=${code} signal=${signal}），${restartDelayMs}ms 后重启`)
-    setTimeout(startRelay, restartDelayMs)
-  })
-}
-
-function shutdown(signal) {
-  if (stopping) return
-  stopping = true
-  try {
-    relay?.kill(signal)
-  } catch {
-    /* 忽略 */
-  }
-  setTimeout(() => process.exit(0), 2500).unref()
-}
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+// 反代目标 host:port。compose 部署为 `relay:8080`（容器名+端口）；
+// 本地单机默认 loopback（与旧单容器形态的 relay 端口一致）。
+const relayUpstream = (() => {
+  const raw = String(process.env.RELAY_UPSTREAM || '127.0.0.1:8081').trim()
+  const match = /^(?:https?:\/\/)?([^/:\s]+):(\d{1,5})$/.exec(raw)
+  if (!match) throw new Error(`RELAY_UPSTREAM 格式应为 host:port（当前：${raw}）`)
+  return { host: match[1], port: Number(match[2]) }
+})()
+console.log(`[auth] relay upstream: ${relayUpstream.host}:${relayUpstream.port}`)
 
 // ============================== HTTP 小工具 ==============================
 
@@ -656,8 +608,8 @@ function filterHeaders(headers) {
 function proxyHttp(req, res) {
   const upstream = httpRequest(
     {
-      host: '127.0.0.1',
-      port: cfg.relayPort,
+      host: relayUpstream.host,
+      port: relayUpstream.port,
       method: req.method,
       path: req.url,
       headers: filterHeaders(req.headers)
@@ -676,7 +628,7 @@ function proxyHttp(req, res) {
 }
 
 function proxyUpgrade(req, socket, head) {
-  const upstream = netConnect(cfg.relayPort, '127.0.0.1', () => {
+  const upstream = netConnect(relayUpstream.port, relayUpstream.host, () => {
     // 原样重建请求行与全部头（含 Upgrade/Sec-WebSocket-*）
     const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
     for (let i = 0; i < req.rawHeaders.length; i += 2) {
@@ -732,6 +684,13 @@ server.on('upgrade', (req, socket, head) => {
 })
 
 server.listen(cfg.port, '::', () => {
-  console.log(`[auth] listening on :${cfg.port}（relay → 127.0.0.1:${cfg.relayPort}）`)
-  startRelay()
+  console.log(`[auth] listening on :${cfg.port}`)
 })
+
+// 优雅退出（容器 stop 时让进行中的请求收尾）
+const shutdown = () => {
+  server.close(() => process.exit(0))
+  setTimeout(() => process.exit(0), 2000).unref()
+}
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)

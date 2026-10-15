@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Orca Auth 管理命令行（宿主端包装脚本）。
-# 内部等价于：docker compose exec -T relay node /app/auth/cli.mjs "$@"
+# 内部等价于：docker compose exec -T auth node /app/auth/cli.mjs "$@"
 #
 # 用法（在 deploy/ 目录下执行）：
 #   ./orca-auth user add --email alice@team.com --name "李静"
@@ -13,4 +13,4 @@
 #   任意命令加 --json 输出机器可读结果
 set -euo pipefail
 cd "$(dirname "$0")"
-exec docker compose exec -T relay node /app/auth/cli.mjs "$@"
+exec docker compose exec -T auth node /app/auth/cli.mjs "$@"

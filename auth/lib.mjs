@@ -77,13 +77,11 @@ export function loadConfig(env = process.env) {
   return {
     // canonical origin：无尾斜杠，逐字节用作 iss
     publicUrl: url.origin,
-    // 本服务对公端口（容器内 8080；对外由 Caddy 终结 HTTPS）
+    // 本服务监听端口（容器内 8080；对外由 Caddy 终结 HTTPS）
     port: Number(env.PORT || 8080),
-    // relay 子进程 loopback 端口
-    relayPort: Number(env.RELAY_PORT || 8081),
     // auth 数据目录（SQLite + 签名密钥 + 交付信息存档）
     authDir: String(env.AUTH_DATA_DIR || '/data/auth'),
-    // relay 数据目录（relay 自己的 SQLite）
+    // relay 数据目录（relay 自己的 SQLite；CLI 只读访问其配对信息）
     relayDataDir: String(env.ORCA_RELAY_DATA_DIR || '/data/relay'),
     // 单组织部署：所有用户归同一个组织
     orgId: String(env.ORCA_AUTH_ORG_ID || 'team'),
@@ -196,21 +194,6 @@ export function rotateSigningKey(authDir) {
   const pemPath = join(keyDir, 'signing-key.pem')
   writeAtomic(pemPath, newSigningKeyPem(), 0o600)
   return loadSigningKeyFrom(pemPath)
-}
-
-/**
- * relay 的 assignment 签名密钥：优先取环境变量；否则在 <authDir>/assignment-key
- * 生成并持久化（重启不变）。
- */
-export function resolveAssignmentKey(cfg, env = process.env) {
-  const fromEnv = String(env.ORCA_RELAY_ASSIGNMENT_SIGNING_KEY ?? '').trim()
-  if (fromEnv) {
-    if (fromEnv.length < 32) throw new Error('ORCA_RELAY_ASSIGNMENT_SIGNING_KEY 长度须 ≥32 字符')
-    return fromEnv
-  }
-  const path = join(cfg.authDir, 'assignment-key')
-  if (!existsSync(path)) writeAtomic(path, randomBytes(32).toString('hex'), 0o600)
-  return readFileSync(path, 'utf8').trim()
 }
 
 // ============================== JWT（手写 ES256） ==============================

@@ -1,4 +1,5 @@
-# Orca 自托管的 HTTPS 终结层：自动申请/续期 Let's Encrypt 证书，全站反代到 relay+auth 容器。
+# Orca 自托管的 HTTPS 终结层：自动申请/续期 Let's Encrypt 证书，全站反代到 auth 容器
+#（auth 再按路径转发给 relay：契约端点/JWKS/登录页自处理，其余反代 relay）。
 # 域名来自 .env 的 PUBLIC_HOSTNAME（docker compose 启动时注入环境变量）。
 # 前提：域名已解析到本机公网 IP，且 80/443 端口可从公网访问（80 用于 ACME 验证）。
 
@@ -12,5 +13,5 @@
 		Strict-Transport-Security "max-age=31536000"
 	}
 	# WebSocket（/v1/connect 等）由 reverse_proxy 自动识别并透明转发
-	reverse_proxy relay:8080
+	reverse_proxy auth:8080
 }

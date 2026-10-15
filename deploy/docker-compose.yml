@@ -1,38 +1,69 @@
-# Orca 自托管一体化部署：relay+auth 容器 + Caddy（自动 HTTPS 证书）。
+# Orca 自托管一体化部署：relay 与 auth 各自独立镜像/容器 + Caddy（自动 HTTPS）。
+#
+# 编排只引用镜像名（不做本地编译）——镜像名在 .env 里配置（ORCA_RELAY_IMAGE / ORCA_AUTH_IMAGE），
+# 可用私有仓库完整地址（如 swr.cn-east-3.myhuaweicloud.com/team/orca-relay:v1）。
+# 镜像构建用 ./build.sh（构建 + 可选 --push），或在别处构建后 docker push / docker save 搬运。
 #
 # 使用步骤：
-#   1. ./init.sh relay.example.com    生成 .env（域名 + 随机密钥）
-#   2. docker compose up -d --build   构建并启动
-#   3. ./orca-auth user add --email alice@team.com --name "李静"   建号
-# 升级：git pull && docker compose up -d --build
-# 备份：docker volume（orca-data：账号库/签名密钥/relay 数据）；Caddy 证书在 caddy-data。
+#   1. ./init.sh relay.example.com   生成 .env（域名 + 随机密钥 + 镜像名）
+#   2. ./build.sh                    构建两个镜像（或在别处构建并推送/搬运）
+#   3. docker compose up -d          启动（本文件不含 build，只拉/用已有镜像）
+#   4. ./orca-auth user add --email alice@team.com --name "李静"   建号
+# 升级：docker compose pull && docker compose up -d（或重新 build.sh 后 up -d）
+# 备份：volumes（relay-data / auth-data / caddy-data）。
 
 name: orca
 
 services:
   relay:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-      args:
-        # 国内服务器构建慢可换成 https://registry.npmmirror.com
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
-    env_file: .env
+    image: ${ORCA_RELAY_IMAGE:-orca-relay:latest}
     environment:
-      # 容器内固定路径（数据都落在 orca-data 卷）
-      AUTH_DATA_DIR: /data/auth
+      PORT: "8080"
+      ORCA_RELAY_ROLE: combined
+      ORCA_RELAY_PUBLIC_URL: ${ORCA_RELAY_PUBLIC_URL}
+      ORCA_RELAY_CELL_URL: ${ORCA_RELAY_PUBLIC_URL}
+      ORCA_RELAY_AUTH_ISSUER: ${ORCA_RELAY_PUBLIC_URL}
+      ORCA_RELAY_AUTH_AUDIENCE: orca-relay
+      # 跨容器从 auth 拉取验签公钥（jwks 端点由 auth 容器提供）
+      ORCA_RELAY_JWKS_URL: http://auth:8080/.well-known/jwks.json
+      ORCA_RELAY_ASSIGNMENT_SIGNING_KEY: ${ORCA_RELAY_ASSIGNMENT_SIGNING_KEY}
+      # 占位值：官方 Google 身份校验的 admin 路由保持不可用（本部署不用官方运维功能）
+      ORCA_RELAY_ADMIN_AUDIENCE: https://admin.invalid
+      ORCA_RELAY_DEPLOY_SERVICE_ACCOUNT: nobody@invalid.example
       ORCA_RELAY_DATA_DIR: /data/relay
+      # ORCA_RELAY_REGION: us-central1        # 可选：区域标识（默认 us-central1）
+      # ORCA_RELAY_CELL_CAPACITY: "900"       # 可选：容量（默认 900，10 人规模无需调整）
     volumes:
-      - orca-data:/data
-    # 调试用端口（仅本机回环；正式流量走 Caddy，无需映射）。需要时取消注释：
+      - relay-data:/data/relay
+    depends_on:
+      - auth
+    # 调试端口（仅本机回环）。需要时取消注释：
     # ports:
-    #   - "127.0.0.1:8080:8080"
+    #   - "127.0.0.1:8081:8080"
+    restart: unless-stopped
+
+  auth:
+    image: ${ORCA_AUTH_IMAGE:-orca-auth:latest}
+    environment:
+      PORT: "8080"
+      ORCA_RELAY_PUBLIC_URL: ${ORCA_RELAY_PUBLIC_URL}
+      # 反代目标：容器名 relay + 端口 8080
+      RELAY_UPSTREAM: relay:8080
+      AUTH_DATA_DIR: /data/auth
+      # CLI（device list）只读 relay 库用（配对手机数 / 最后活跃）
+      ORCA_RELAY_DATA_DIR: /data/relay
+      # 组织名（客户端账户显示用）
+      ORCA_AUTH_ORG_ID: ${ORCA_AUTH_ORG_ID:-team}
+      ORCA_AUTH_ORG_NAME: ${ORCA_AUTH_ORG_NAME:-Team}
+    volumes:
+      - auth-data:/data/auth
+      - relay-data:/data/relay:ro
     restart: unless-stopped
 
   caddy:
     image: caddy:2-alpine
     depends_on:
-      - relay
+      - auth
     environment:
       PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME}
     ports:
@@ -45,6 +76,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  orca-data:
+  relay-data:
+  auth-data:
   caddy-data:
   caddy-config:

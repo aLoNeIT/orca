@@ -66,6 +66,13 @@ ORCA_RELAY_PUBLIC_URL=https://${DOMAIN}
 # relay 的 assignment 签名密钥（≥32 字节 hex）
 ORCA_RELAY_ASSIGNMENT_SIGNING_KEY=${ASSIGNMENT_KEY}
 
+# 镜像名（compose 直接引用，不做本地编译；构建用 ./build.sh）
+# 可改为私有仓库完整地址，例如：
+#   ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/team/orca-relay:v1
+#   ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/team/orca-auth:v1
+ORCA_RELAY_IMAGE=orca-relay:latest
+ORCA_AUTH_IMAGE=orca-auth:latest
+
 # 组织名（客户端显示用，可选修改）
 # ORCA_AUTH_ORG_ID=team
 # ORCA_AUTH_ORG_NAME=Team
@@ -81,14 +88,18 @@ echo "✔ 初始化完成：deploy/.env 已生成（域名 ${DOMAIN}）"
 echo ""
 echo "下一步："
 echo "  1. 确认域名 ${DOMAIN} 已解析到本机公网 IP，且 80/443 端口开放"
-echo "  2. 构建并启动："
-echo "       docker compose up -d --build"
-echo "  3. 等待证书签发（约 10-30 秒），验证："
+echo "  2. 准备镜像（二选一）："
+echo "       本机构建：  ./build.sh"
+echo "       已有镜像：  把 .env 里 ORCA_RELAY_IMAGE / ORCA_AUTH_IMAGE 改成仓库地址后 docker login"
+echo "  3. 启动："
+echo "       docker compose up -d"
+echo "  4. 等待证书签发（约 10-30 秒），验证："
 echo "       curl https://${DOMAIN}/.well-known/jwks.json"
-echo "  4. 给成员建号（自动生成初始密码 + 交付信息，可直接转发）："
+echo "  5. 给成员建号（自动生成初始密码 + 交付信息，可直接转发）："
 echo "       ./orca-auth user add --email alice@team.com --name \"李静\""
 echo ""
 echo "常用命令："
 echo "  ./orca-auth user list                 查看用户"
 echo "  ./orca-auth device list               查看已连接的电脑"
-echo "  docker compose logs -f relay          查看服务日志"
+echo "  docker compose logs -f relay          查看 relay 日志"
+echo "  docker compose logs -f auth           查看 auth 日志"

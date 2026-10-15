@@ -1,19 +1,16 @@
-# Orca 自托管部署镜像：官方 relay 产物 + 自研 auth 同容器（node:24-alpine）。
+# Orca Relay 镜像（官方 relay 产物，combined 单进程角色，node:24-alpine）。
 #
-# 构建方式与官方 cloud/apps/relay/Dockerfile 及社区生产版（orca-railway）完全一致，
-# 差异只有两处：构建上下文用本地仓库（不依赖容器内访问 GitHub），
-# 以及把 auth/*.mjs 打包进 /app/auth，由 server.mjs 在同容器内拉起 relay 子进程。
+# 构建步骤与官方 cloud/apps/relay/Dockerfile 及社区生产版（orca-railway）一致，
+# 差异仅一处：构建源用本地仓库的 cloud/ 目录，不依赖容器内访问 GitHub。
 #
-# 手工构建（在仓库根目录执行）：
-#   docker build -f deploy/Dockerfile -t orca-relay:local .
+# 构建（在 deploy/ 目录，或直接用 ./build.sh）：
+#   docker build -f Dockerfile.relay -t orca-relay:latest ..
 # 国内服务器可加：--build-arg NPM_REGISTRY=https://registry.npmmirror.com
-# 常规方式直接用 deploy/docker-compose.yml（推荐）。
 
-# ---------- Stage 1: 构建 relay（步骤对齐官方 Dockerfile） ----------
+# ---------- Stage 1: 构建 relay ----------
 FROM node:24-alpine AS build
 WORKDIR /app
 RUN corepack enable
-# 国内服务器可传 --build-arg NPM_REGISTRY=https://registry.npmmirror.com 加速
 ARG NPM_REGISTRY=https://registry.npmjs.org
 RUN pnpm config set registry "$NPM_REGISTRY"
 COPY cloud/package.json cloud/pnpm-lock.yaml cloud/pnpm-workspace.yaml cloud/tsconfig.base.json ./
@@ -32,7 +29,6 @@ WORKDIR /app
 RUN corepack enable && apk add --no-cache su-exec
 ENV NODE_ENV=production \
     PORT=8080 \
-    AUTH_DATA_DIR=/data/auth \
     ORCA_RELAY_DATA_DIR=/data/relay
 # 生产依赖（relay 的运行依赖）
 COPY cloud/package.json cloud/pnpm-lock.yaml cloud/pnpm-workspace.yaml ./
@@ -43,9 +39,6 @@ COPY --from=build /app/packages/relay-contract/dist packages/relay-contract/dist
 COPY --from=build /app/packages/postgres-schema/dist packages/postgres-schema/dist
 COPY --from=build /app/apps/relay/dist apps/relay/dist
 RUN pnpm install --prod --frozen-lockfile --filter @orca-cloud/relay...
-# 自研 auth：三个零依赖 .mjs，复制即运行，无构建步骤
-COPY auth /app/auth
 EXPOSE 8080
-# 数据卷以 root 挂载：入口先确保目录存在并归属 node，再降权运行
-# （--disable-warning=ExperimentalWarning 关闭 node:sqlite 的实验性提示）
-CMD ["sh", "-c", "mkdir -p /data/auth /data/relay && chown -R node:node /data && exec su-exec node node --disable-warning=ExperimentalWarning /app/auth/server.mjs"]
+# 数据卷以 root 挂载：入口先确保目录归属 node，再降权运行
+CMD ["sh", "-c", "mkdir -p /data/relay && chown -R node:node /data/relay && exec su-exec node node apps/relay/dist/index.js"]
