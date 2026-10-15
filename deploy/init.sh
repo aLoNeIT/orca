@@ -54,9 +54,9 @@ rand_hex() {
 }
 ASSIGNMENT_KEY="$(rand_hex)"
 
-# ---------- 4. 数据目录（SQLite / 密钥 / 证书直接落盘，便于查看与备份） ----------
+# ---------- 4. 数据目录（SQLite / 密钥直接落盘，便于查看与备份） ----------
 DATA_DIR="./data"
-mkdir -p "${DATA_DIR}/auth" "${DATA_DIR}/relay" "${DATA_DIR}/caddy" "${DATA_DIR}/caddy-config"
+mkdir -p "${DATA_DIR}/auth" "${DATA_DIR}/relay"
 # 容器内以 node 用户（uid 1000）运行；Linux 上若以 root 执行初始化则预置归属，
 # 非 root 也无妨：容器启动时会自行修复绑定目录的归属。
 if [ "$(id -u)" = "0" ]; then
@@ -68,14 +68,17 @@ cat > .env <<EOF
 # Orca 自托管部署配置（由 init.sh 生成）
 # ⚠ 本文件含密钥，勿提交到 git / 勿外发。
 
-# 公开域名：Caddy 用它自动申请 HTTPS 证书（需已解析到本机公网 IP）
-PUBLIC_HOSTNAME=${DOMAIN}
+# 客户端访问的完整 origin：由宿主机 Nginx 终结 TLS 后转发（https、不带路径/尾斜杠）。
+# 桌面端会做 canonical origin 校验，且它逐字节用作 token issuer（须与 Nginx 访问域名一致）。
 ORCA_RELAY_PUBLIC_URL=https://${DOMAIN}
 
 # relay 的 assignment 签名密钥（≥32 字节 hex）
 ORCA_RELAY_ASSIGNMENT_SIGNING_KEY=${ASSIGNMENT_KEY}
 
-# 数据目录（两个 SQLite 库 / auth 签名密钥 / HTTPS 证书都落在这里）
+# 对外端口：宿主机 Nginx 转发到本端口（容器内固定 8080）
+ORCA_AUTH_PORT=8080
+
+# 数据目录（两个 SQLite 库 / auth 签名密钥都落在这里）
 # 相对路径基于本目录（默认 ./data），也可改为绝对路径（如 /srv/orca/data）；
 # 备份 = 直接打包复制该目录。
 ORCA_DATA_DIR=./data
@@ -101,19 +104,21 @@ echo ""
 echo "✔ 初始化完成：deploy/.env 已生成（域名 ${DOMAIN}）"
 echo ""
 echo "下一步："
-echo "  1. 确认域名 ${DOMAIN} 已解析到本机公网 IP，且 80/443 端口开放"
-echo "  2. 准备镜像（二选一）："
+echo "  1. 准备镜像（二选一）："
 echo "       本机构建：  ./build.sh"
 echo "       已有镜像：  把 .env 里 ORCA_RELAY_IMAGE / ORCA_AUTH_IMAGE 改成仓库地址后 docker login"
-echo "  3. 启动："
+echo "  2. 启动："
 echo "       docker compose up -d"
-echo "  4. 等待证书签发（约 10-30 秒），验证："
+echo "  3. 在宿主机 Nginx 上配置转发（要点见 deploy/nginx.example.conf）："
+echo "       https://${DOMAIN}  →  http://127.0.0.1:8080（ORCA_AUTH_PORT）"
+echo "       必须转发 WebSocket 升级头（/v1/connect 长连接）与 X-Forwarded-For（登录限速按真实 IP）"
+echo "  4. 验证："
 echo "       curl https://${DOMAIN}/.well-known/jwks.json"
 echo "  5. 给成员建号（自动生成初始密码 + 交付信息，可直接转发）："
 echo "       ./orca-auth user add --email alice@team.com --name \"李静\""
 echo ""
 echo "数据与备份："
-echo "  数据目录：deploy/data/（两个 SQLite 库、auth 密钥、HTTPS 证书均可直接查看）"
+echo "  数据目录：deploy/data/（两个 SQLite 库、auth 密钥可直接查看）"
 echo "  备份：    tar czf orca-data-\$(date +%F).tgz data/"
 echo ""
 echo "常用命令："

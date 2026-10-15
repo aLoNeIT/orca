@@ -1,9 +1,5 @@
 # 本地生成物（不入库）
 
 # 运行数据目录（ORCA_DATA_DIR 的默认位置）：
-# 两个 SQLite 库 / auth 签名密钥 / HTTPS 证书 —— 属运行时数据，绝不入库。
+# 两个 SQLite 库 / auth 签名密钥 —— 属运行时数据，绝不入库。
 data/
-
-# Caddy 本地 CA 根证书：本地演示时导出（安装到系统信任区可消除浏览器警告），
-# 正式部署用真实域名 + Let's Encrypt，不需要此文件。
-caddy-root.crt
