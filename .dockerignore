@@ -1,0 +1,22 @@
+# Docker 构建上下文裁剪（context = 仓库根）。
+# 构建只需 cloud/（relay 源码）+ auth/（自研 auth）+ deploy/（本目录）。
+# 用 / 前缀精确匹配仓库根目录，避免误伤 cloud/ 内部同名目录。
+
+/.git
+/.github
+/.husky
+/src
+/mobile
+/native
+/resources
+/tests
+/examples
+/docs
+/Casks
+/skills
+/skill-guides
+/skill-stubs
+/.tmp
+/.workbuddy
+node_modules
+*.log

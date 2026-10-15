@@ -1,0 +1,50 @@
+# Orca 自托管一体化部署：relay+auth 容器 + Caddy（自动 HTTPS 证书）。
+#
+# 使用步骤：
+#   1. ./init.sh relay.example.com    生成 .env（域名 + 随机密钥）
+#   2. docker compose up -d --build   构建并启动
+#   3. ./orca-auth user add --email alice@team.com --name "李静"   建号
+# 升级：git pull && docker compose up -d --build
+# 备份：docker volume（orca-data：账号库/签名密钥/relay 数据）；Caddy 证书在 caddy-data。
+
+name: orca
+
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        # 国内服务器构建慢可换成 https://registry.npmmirror.com
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    env_file: .env
+    environment:
+      # 容器内固定路径（数据都落在 orca-data 卷）
+      AUTH_DATA_DIR: /data/auth
+      ORCA_RELAY_DATA_DIR: /data/relay
+    volumes:
+      - orca-data:/data
+    # 调试用端口（仅本机回环；正式流量走 Caddy，无需映射）。需要时取消注释：
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - relay
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  orca-data:
+  caddy-data:
+  caddy-config:
