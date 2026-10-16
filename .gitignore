@@ -87,6 +87,7 @@ prod-release-scan-*.md
 # Temp
 tmp/
 .tmp/
+.workbuddy/
 design-docs/
 .context/
 .atl/
