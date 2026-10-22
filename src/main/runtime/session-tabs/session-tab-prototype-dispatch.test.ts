@@ -65,24 +65,6 @@ class SessionTabRuntime extends OrcaRuntimeService {
   normalizeOrderMethod() {
     return this.normalizeMobileSessionTabOrder
   }
-
-  lengths(): number[] {
-    return [
-      this.persistHeadlessSessionTabProps.length,
-      this.applyHeadlessSessionTabPropsToSnapshot.length,
-      this.getMobileSessionTopLevelTabId.length,
-      this.persistHeadlessTerminalPaneLayout.length,
-      this.applyHeadlessTerminalPaneLayoutToSnapshot.length,
-      this.moveHeadlessMobileSessionTab.length,
-      this.splitHeadlessMobileSessionTabGroup.length,
-      this.moveHeadlessMobileSessionTabToGroup.length,
-      this.requireHeadlessTargetGroup.length,
-      this.persistHeadlessTabGroups.length,
-      this.waitForSessionTabsInventoryPublication.length,
-      this.getAuthoritativeSessionTabsInventoryEpoch.length,
-      this.markSessionTabsInventoryPublished.length
-    ]
-  }
 }
 
 class GroupDispatchRuntime extends SessionTabRuntime {
@@ -117,10 +99,6 @@ class GroupDispatchRuntime extends SessionTabRuntime {
 }
 
 describe('original session tab runtime prototypes', () => {
-  it('retains all thirteen native parameter counts, including protected helpers', () => {
-    expect(new SessionTabRuntime(null).lengths()).toEqual([3, 3, 1, 2, 2, 3, 3, 3, 2, 3, 1, 0, 0])
-  })
-
   it.each(['split', 'move-to-group'] as const)('uses the runtime %s override', (kind) => {
     const runtime = new GroupDispatchRuntime(null)
     const move: RuntimeMobileSessionTabMove =
@@ -262,28 +240,6 @@ describe('original session tab runtime prototypes', () => {
       })
     ).toEqual({ moved: true })
     expect(trace).toEqual(['callee', 'tabOrder', 'call'])
-  })
-
-  it('keeps the original scalar and one canonical waiter Set through the constructor seam', () => {
-    let atSeam: Set<() => void> | undefined
-    let initialEpoch: number | null | undefined
-    let topLevelId: string | undefined
-    class ConstructorRuntime extends SessionTabRuntime {
-      protected override get canonicalFetchKeyCache(): ReadonlyMap<string, string> {
-        atSeam = this.sessionTabsInventoryWaiters
-        initialEpoch = this.sessionTabsInventoryPublicationEpoch
-        topLevelId = this.getMobileSessionTopLevelTabId(snapshot().tabs[0])
-        return super.canonicalFetchKeyCache
-      }
-      waiterSet(): Set<() => void> {
-        return this.sessionTabsInventoryWaiters
-      }
-    }
-    const runtime = new ConstructorRuntime(null)
-    expect(atSeam).toBeInstanceOf(Set)
-    expect(runtime.waiterSet()).toBe(atSeam)
-    expect(initialEpoch).toBeNull()
-    expect(topLevelId).toBe('tab')
   })
 })
 

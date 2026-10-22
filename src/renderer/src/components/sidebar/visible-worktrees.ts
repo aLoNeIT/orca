@@ -1,32 +1,26 @@
-export type { SidebarFilterState } from './visible-worktree-kinds'
+export type { SidebarFilterState } from './sidebar-filter-actions'
 export {
   computeVisibleWorktreeIds,
   computeVisibleWorktrees,
   type VisibleWorktreeOptions
 } from './compute-visible-worktrees'
 import { computeVisibleWorktreeIds } from './compute-visible-worktrees'
-export {
-  isSleepingSweepExemptionNarrowingList,
-  isSleepingSweepExemptWorkspace
-} from './visible-worktree-kinds'
-export {
-  isAutomationGeneratedWorkspace,
-  isCliCreatedWorkspace,
-  isDetachedHeadWorkspace
-} from '../../../../shared/worktree/workspace-kinds'
-export { sidebarHasActiveFilters, computeClearFilterActions } from './sidebar-filter-actions'
-export type { ClearFilterActions } from './sidebar-filter-actions'
+export { sidebarHasActiveFilters } from './sidebar-filter-actions'
 import {
   getVisibleWorkspaceHostIdSet,
   worktreeMatchesVisibleHost
 } from './visible-worktree-host-scope'
 import type { Worktree } from '../../../../shared/worktree/types'
-import { buildWorktreeComparator, sortWorktreesSmart } from './smart-sort'
+import {
+  buildWorktreeComparator,
+  sortWorktreesSmart
+} from '../../../../shared/sidebar-list/smart-sort'
 export {
   EMPTY_STRUCTURED_CHAT_WORKTREE_IDS,
   getWorktreeIdsWithStructuredChat
 } from './visible-worktree-activity-inputs'
 import { buildVisibleWorktreeOptionsFromState } from './visible-worktree-options-from-state'
+import { selectWorktreesByRepo } from '@/store/workspace-record-selectors'
 import { useAppStore } from '@/store'
 import { getAllWorktreesFromState, getRepoMapFromState } from '@/store/selectors'
 import { getSettingsFocusedExecutionHostId } from '../../../../shared/execution-host'
@@ -108,7 +102,7 @@ export function getVisibleWorktreeIds(): string[] {
   }
 
   const visibleIds = computeVisibleWorktreeIds(
-    state.worktreesByRepo,
+    selectWorktreesByRepo(state),
     sortedIds,
     buildVisibleWorktreeOptionsFromState(state, repoMap)
   )

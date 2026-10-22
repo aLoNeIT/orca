@@ -1,23 +1,17 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { ExecutionHostId } from '../../../src/shared/execution-host'
 import type { ExecutionHostHealth } from '../../../src/shared/execution-host-health'
-import type { WorkspaceStatusDefinition } from '../../../src/shared/worktree/types'
 import { getCachedWorktrees } from '../cache/worktree-cache'
-import { createInitialHostRouteActionState } from '../host-route-action-state'
 import type { RpcClient } from '../transport/rpc-client'
-import { DEFAULT_MOBILE_WORKSPACE_STATUSES } from '../worktree/mobile-workspace-statuses'
 import { WorktreeCatalogSnapshotClient } from '../worktree/worktree-catalog-snapshot-client'
-import type {
-  MobileGroupMode,
-  MobileSortMode,
-  MobileViewState
-} from '../worktree/workspace-view-settings'
-import type { FilterState, Worktree } from '../worktree/workspace-list-sections'
+import { INITIAL_MOBILE_VIEW, type MobileViewState } from '../worktree/workspace-view-settings'
+import type { Worktree } from '../worktree/workspace-list-sections'
 import type { ServedProjectSections } from '../worktree/project-sections-operations'
 import type { SectionRepo } from '../worktree/workspace-list-types'
 import { NO_SERVER_WORKSPACES, type ServerWorkspaces } from '../worktree/server-workspaces'
+import type { ProjectGroup } from '../../../src/shared/project-group-types'
 
-export function useHostScreenState(hostId: string | undefined, action: string | undefined) {
+export function useHostScreenState(hostId: string | undefined) {
   const [initialCache] = useState(() =>
     hostId ? (getCachedWorktrees(hostId) as Worktree[] | null) : null
   )
@@ -29,7 +23,6 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
   const fetchRepoMetadataInFlightRef = useRef(new WeakSet<RpcClient>())
   const fetchRepoMetadataPendingRef = useRef(new WeakSet<RpcClient>())
   const repoMetadataFetchedAtRef = useRef(0)
-  const newWorktreeModalRef = useRef<{ open: () => void }>(null)
   const newWorktreeModalVisibleRef = useRef(false)
   const [worktrees, setWorktrees] = useState<Worktree[]>(initialCache ?? [])
   const [worktreesLoaded, setWorktreesLoaded] = useState(initialCache != null)
@@ -54,17 +47,9 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
   const [lastKnownWorktrees, setLastKnownWorktrees] = useState<Worktree[]>(initialCache ?? [])
   const [search, setSearch] = useState('')
   const [showSearch, setShowSearch] = useState(false)
-  const [sortMode, setSortMode] = useState<MobileSortMode>('recent')
-  const [filters, setFilters] = useState<FilterState>({
-    filterRepoIds: new Set(),
-    hideSleeping: false,
-    hideDefaultBranch: false,
-    alwaysShowDefaultBranch: true
-  })
-  const [groupMode, setGroupMode] = useState<MobileGroupMode>('repo')
-  const [workspaceStatuses, setWorkspaceStatuses] = useState<readonly WorkspaceStatusDefinition[]>(
-    DEFAULT_MOBILE_WORKSPACE_STATUSES
-  )
+  // The Workspace options this screen shares with the desktop; viewRef mirrors it for writes.
+  const [view, setView] = useState<MobileViewState>(INITIAL_MOBILE_VIEW)
+  const viewRef = useRef(view)
   // The desktop sidebar's Project grouping inputs; null for a desktop that serves none.
   const [servedProjectSections, setServedProjectSections] = useState<ServedProjectSections | null>(
     null
@@ -82,57 +67,43 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
   const [hostPlatform, setHostPlatform] = useState<NodeJS.Platform | null>(null)
   // The desktop's servers and their rows, listed through the desktop (mobileRelay.hosts.*).
   const [serverWorkspaces, setServerWorkspaces] = useState<ServerWorkspaces>(NO_SERVER_WORKSPACES)
-  // The desktop's shown hosts (ui.get visibleWorkspaceHostIds); null shows every host.
-  const [visibleHostIds, setVisibleHostIds] = useState<ReadonlySet<ExecutionHostId> | null>(null)
   // Why its own banner state: a tap on a server that needs an update says so until dismissed.
   const [serverNotice, setServerNotice] = useState<string | null>(null)
-  const [showSortPicker, setShowSortPicker] = useState(false)
-  const [showGroupPicker, setShowGroupPicker] = useState(false)
-  const [showFilterModal, setShowFilterModal] = useState(false)
+  const [showWorkspaceOptions, setShowWorkspaceOptions] = useState(false)
   const [actionTarget, setActionTarget] = useState<Worktree | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Worktree | null>(null)
   const [confirmRemoveHost, setConfirmRemoveHost] = useState(false)
-  const [routeActionState, setRouteActionState] = useState(() =>
-    createInitialHostRouteActionState(action)
-  )
+  const [showNewWorktree, setShowNewWorktree] = useState(false)
+  // Why the ref too: the catalog poll reads it from callbacks that outlive this render.
+  const setNewWorktreeVisible = useCallback((visible: boolean) => {
+    newWorktreeModalVisibleRef.current = visible
+    setShowNewWorktree(visible)
+  }, [])
   const [sleptIds, setSleptIds] = useState<Set<string>>(new Set())
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   // Desktop's "Also show pinned worktrees in their original lists"; off by default.
   const [showPinnedInGroups, setShowPinnedInGroups] = useState(false)
-  // Why: ref so the ui.get merge and ui.set writes read the latest values without re-creating callbacks on every state change.
-  const viewStateRef = useRef<MobileViewState>({
-    groupMode: 'repo',
-    sortMode: 'recent',
-    hideSleeping: false,
-    hideDefaultBranch: false,
-    alwaysShowDefaultBranch: true,
-    filterRepoIds: [],
-    collapsedGroups: [],
-    workspaceStatuses: DEFAULT_MOBILE_WORKSPACE_STATUSES
-  })
+  // A feed-built list's project groups on a host with no window to publish them.
+  const [hostProjectGroups, setHostProjectGroups] = useState<readonly ProjectGroup[]>([])
 
   return {
     actionTarget,
     catalogError,
     clientRef,
-    collapsedGroups,
     confirmDelete,
     confirmRemoveHost,
+    hostProjectGroups,
     actionError,
     error,
     fetchRepoMetadataInFlightRef,
     fetchRepoMetadataPendingRef,
     fetchWorktreesInFlightRef,
-    filters,
-    groupMode,
     hostLabelById,
     hostHealthById,
     hostName,
     hostPlatform,
     hostStoredDescriptor,
     lastKnownWorktrees,
-    newWorktreeModalRef,
     newWorktreeModalVisibleRef,
     optimisticActiveWorktreeIdentity,
     pinnedIds,
@@ -140,19 +111,16 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
     servedProjectSections,
     desktopRepos,
     repoMetadataFetchedAtRef,
-    routeActionState,
     search,
     serverNotice,
     serverWorkspaces,
     setActionTarget,
     setCatalogError,
-    setCollapsedGroups,
     setConfirmDelete,
     setConfirmRemoveHost,
+    setHostProjectGroups,
     setActionError,
     setError,
-    setFilters,
-    setGroupMode,
     setHostLabelById,
     setHostHealthById,
     setHostName,
@@ -164,31 +132,24 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
     setRepoHostIdByRepoId,
     setServedProjectSections,
     setDesktopRepos,
-    setRouteActionState,
+    setNewWorktreeVisible,
     setSearch,
     setServerNotice,
     setServerWorkspaces,
-    setShowFilterModal,
+    setShowWorkspaceOptions,
     setShowPinnedInGroups,
-    setShowGroupPicker,
     setShowSearch,
-    setShowSortPicker,
     setSleptIds,
-    setSortMode,
-    setVisibleHostIds,
-    setWorkspaceStatuses,
     setWorktrees,
     setWorktreesLoaded,
-    showFilterModal,
+    showNewWorktree,
+    showWorkspaceOptions,
     showPinnedInGroups,
-    showGroupPicker,
     showSearch,
-    showSortPicker,
+    setView,
+    view,
+    viewRef,
     sleptIds,
-    sortMode,
-    viewStateRef,
-    visibleHostIds,
-    workspaceStatuses,
     worktreeCatalogRef,
     worktrees,
     worktreesLoaded

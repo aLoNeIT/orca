@@ -1,3 +1,4 @@
+import { AT_REST_COMMANDS_READ_BUDGET_MS } from './at-rest-command-catalog'
 import type { AgentSessionStatusSummary } from '../../../shared/agent-session-wire'
 import { AgentSessionRefusalError } from '../../../shared/agent-session-wire-refusals'
 import type { AgentChildWorkEvidence } from '../../../shared/agent-status-child-work-evidence'
@@ -18,7 +19,9 @@ import { StructuredAgentSessionSendSettlement } from './structured-agent-session
 import { heldStructuredAgentSessionCurrentWork } from './structured-agent-session-host-current-work'
 import { structuredAgentSessionConversationFence } from './structured-agent-session-provider-child'
 import type { StructuredAgentSessionStatusSubscriber } from './structured-agent-session-status-feed'
+import type { CapturedChildWorkStops } from './structured-agent-session-status-ownership'
 import { createStructuredAgentSessionHostStatusFeed } from './structured-agent-session-host-status-feed'
+import type { StructuredAgentSessionChildWorkProducer } from './structured-agent-session-subagent-rows'
 import {
   StructuredAgentSessionTurnCompletionFeed,
   type StructuredAgentSessionTurnCompletionSubscriber
@@ -97,13 +100,33 @@ export class StructuredAgentSessionClientDelivery {
     return record ? adapter.atRestCommands?.read(record) : undefined
   }
 
+  /** As `readCommands`, but a scan this read starts or finds running gets a short while to land,
+   *  for a client that asks once per menu and never hears a later change. */
+  async readCommandsSettled(sessionId: string) {
+    const { adapter, store } = this.deps()
+    const live = adapter.readCommands?.(sessionId)
+    const record = store.getRecord(sessionId)
+    if (live !== undefined || !record) {
+      return live
+    }
+    const commands = adapter.atRestCommands?.settled
+      ? await adapter.atRestCommands.settled(record, AT_REST_COMMANDS_READ_BUDGET_MS)
+      : adapter.atRestCommands?.read(record)
+    return adapter.readCommands?.(sessionId) ?? commands
+  }
+
   publishStatus = (sessionId: string): void => this.statusFeed.publish(sessionId)
 
   publishConversationName = (sessionId: string): void =>
     this.statusFeed.publishConversationName(sessionId)
 
-  publishChildWork = (sessionId: string, evidence: AgentChildWorkEvidence[]): void =>
-    this.statusFeed.publishChildWork(sessionId, evidence)
+  publishRecordNotes = (sessionId: string): void => this.statusFeed.publishRecordNotes(sessionId)
+
+  publishChildWork = (
+    sessionId: string,
+    evidence: AgentChildWorkEvidence[],
+    producer?: StructuredAgentSessionChildWorkProducer
+  ): void => this.statusFeed.publishChildWork(sessionId, evidence, producer)
 
   /** What the feed publishes as `stopping`: only a working session is still being stopped. */
   readStopping = (sessionId: string): boolean => {
@@ -113,6 +136,14 @@ export class StructuredAgentSessionClientDelivery {
 
   readChildWork = (sessionId: string): AgentChildWorkView[] | undefined =>
     this.statusFeed.readChildWork(sessionId)
+
+  /** Child work the provider reported running and not over: what every owed-work decision reads. */
+  childWorkOpen = (sessionId: string): boolean => this.statusFeed.childWorkOpen(sessionId)
+
+  captureChildWorkStops = (
+    sessionId: string,
+    handleIds: readonly string[]
+  ): CapturedChildWorkStops => this.statusFeed.captureChildWorkStops(sessionId, handleIds)
 
   childWorkIncomplete = (sessionId: string): boolean =>
     this.statusFeed.childWorkIncomplete(sessionId)
@@ -205,7 +236,9 @@ export class StructuredAgentSessionClientDelivery {
 
   private settlementReading(sessionId: string, journal: AgentSessionJournal) {
     return {
-      submissions: () => journal.submissions(),
+      // A send the child stopped holding unanswered settles the wait as doubt (`publishedSubmission`).
+      submissions: () =>
+        journal.submissions().map(this.currentWork(sessionId, journal).publishedSubmission),
       cursor: () => journal.cursor(),
       activeTurnId: () => this.currentWork(sessionId, journal).activeTurnId()
     }

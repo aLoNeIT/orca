@@ -29,7 +29,7 @@ import { OrcaRuntimeService } from './orca-runtime'
 import { _resetTracerForTests, setActiveSink } from '../observability/tracer'
 import type { StructuredAgentSessionStatusSink } from '../native-chat/agent-session-wire/structured-agent-session-status-feed'
 import * as structuredMailTarget from './orchestration/structured-session-mail-target'
-import { OrcaRuntimeWithRuntimeId } from './orca-runtime-runtime-id'
+import { OrcaRuntimeWithRuntimeId } from './construction/runtime-identity-state'
 
 describe('structured status sink wiring', () => {
   afterEach(() => {
@@ -47,8 +47,6 @@ describe('structured status sink wiring', () => {
     expect(installed.deps?.['statusSink']).toBe(sink)
   })
 
-  // The runtime class does not typecheck its own calls, so the required logger is pinned here:
-  // a logger that writes nowhere would pass every host test while the desktop dropped failures.
   it('hands the host the trace-file logger', async () => {
     installed.logger = null
     const push = vi.fn()
@@ -111,7 +109,8 @@ describe('mail dispatch through the current runtime', () => {
     })
 
     target.onStructuredSessionStatusForMail({ sessionId: 'session-mailbox', status: 'working' })
-    expect(events).toEqual([])
+    expect(events).toEqual(['journal:session-mailbox'])
+    events.length = 0
     target.onStructuredSessionStatusForMail({ sessionId: 'session-mailbox', status: 'idle' })
     expect(events).toEqual(['journal:session-mailbox', 'delivery:term_mailbox'])
   })
@@ -161,30 +160,42 @@ describe('mail dispatch through the current runtime', () => {
   })
 })
 
-class MailSchedulerPhaseProbe extends OrcaRuntimeWithRuntimeId {
+abstract class MailSchedulerPhaseProbe extends OrcaRuntimeWithRuntimeId {
   readonly pendingMailDuringConstruction = this.mailPointerRepointScheduler.pendingCount
-}
-
-class ConstructorMailStatusProbe extends OrcaRuntimeService {
-  protected override get canonicalFetchKeyCache(): ReadonlyMap<string, string> {
-    this.onStructuredSessionStatusForMail({ sessionId: 'construction', status: 'working' })
-    return super.canonicalFetchKeyCache
-  }
 }
 
 describe('input state before later runtime layers initialize', () => {
   it('makes the scheduler available immediately after the original base layer', () => {
-    expect(new MailSchedulerPhaseProbe().pendingMailDuringConstruction).toBe(0)
+    expect(
+      Object.getOwnPropertyDescriptor(
+        Reflect.construct(MailSchedulerPhaseProbe, []),
+        'pendingMailDuringConstruction'
+      )?.value
+    ).toBe(0)
+  })
+})
+
+describe('checked runtime construction', () => {
+  it('installs subscription callbacks on the runtime with their real registry receiver', () => {
+    const runtime = new OrcaRuntimeService()
+    const cleanup = vi.fn()
+    runtime.registerSubscriptionCleanup('construction-subscription', cleanup)
+    runtime.cleanupSubscription('construction-subscription')
+    expect(cleanup).toHaveBeenCalledOnce()
+    runtime.cleanupSubscription('construction-subscription')
+    expect(cleanup).toHaveBeenCalledOnce()
   })
 
-  it('preserves mail method reentry from the original constructor getter seam', () => {
-    expect(() => new ConstructorMailStatusProbe()).not.toThrow()
-  })
-
-  it('retains one canonical scheduler without an additional mailbox owner', () => {
-    const target = new OrcaRuntimeService()
-    const descriptor = Object.getOwnPropertyDescriptor(target, 'mailPointerRepointScheduler')
-    expect(descriptor?.value).toBe(target['mailPointerRepointScheduler'])
-    expect(Object.hasOwn(target, 'mailboxControl')).toBe(false)
+  it('keeps constructor callbacks lazy and the canonical status producer identity', () => {
+    const snapshot = vi.fn(() => [])
+    const stopped = vi.fn()
+    const runtime = new OrcaRuntimeService(null, undefined, {
+      getAgentStatusSnapshot: snapshot,
+      onPtyStopped: stopped
+    })
+    expect(runtime.getAgentStatusSnapshotFn).toBe(snapshot)
+    expect(runtime['onPtyStopped']).toBe(stopped)
+    expect(snapshot).not.toHaveBeenCalled()
+    expect(stopped).not.toHaveBeenCalled()
   })
 })

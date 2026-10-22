@@ -5,6 +5,12 @@ import type { WorktreeMeta } from '../../../../shared/worktree/meta-types'
 import type { Store } from '../../../persistence/loading-store/store'
 import { mergeWorktreeMetaForWrite } from '../../../persistence/loading-store/worktree-meta-write-normalization'
 import { isWslMoveRepoBlocked } from '../../../persistence/moving-wsl-projects/wsl-move-background-backoff'
+import { getRepoExecutionHostId } from '../../../../shared/execution-host'
+import {
+  hostWorktreeTargetForRepo,
+  readAllWorktreeMetaForHost,
+  readWorktreeMetaForHost
+} from '../../../persistence/host-qualified-worktree-meta'
 import {
   createWorktreeVisibilitySourceMatcher,
   resolveCustomWorktreeVisibilitySources
@@ -14,7 +20,7 @@ import {
   toDetectedWorktree,
   applyMetadataFallbackVisibility
 } from '../../../../shared/worktree/ownership'
-import { projectResolvedWorktreeLineage } from '../../../../shared/resolved-worktree-lineage'
+import { projectWorktreeLineageWithHostPeers } from '../../../worktree-lineage-host-peers'
 import { getProjectHostSetupMetaUpdates } from './worktree-discovery-metadata'
 import {
   getFolderWorkspaceInstanceIdentity,
@@ -29,7 +35,8 @@ function folderMetaWriter(
   repo: Repo
 ): (worktreeId: string, updates: Partial<WorktreeMeta>) => WorktreeMeta {
   if (!isWslMoveRepoBlocked(repo)) {
-    return (worktreeId, updates) => store.setWorktreeMeta(worktreeId, updates)
+    return (worktreeId, updates) =>
+      store.setWorktreeMeta(hostWorktreeTargetForRepo(worktreeId, repo), updates)
   }
   return (worktreeId, updates) => {
     const existing = store.getWorktreeMeta(worktreeId)
@@ -119,16 +126,19 @@ export function listVisibleFolderWorkspaces(store: Store, repo: Repo): Worktree[
 export function buildDisconnectedDetectedWorktrees(
   store: Store,
   repo: Repo,
-  worktrees: Worktree[]
+  worktrees: Worktree[],
+  options: { hostMeta?: Record<string, WorktreeMeta> } = {}
 ): DetectedWorktree[] {
   const settings = store.getSettings()
+  const hostId = getRepoExecutionHostId(repo)
+  const hostMeta = options.hostMeta ?? readAllWorktreeMetaForHost(store, hostId)
   const worktreeVisibilitySourceMatcher = createWorktreeVisibilitySourceMatcher(
     [repo.path, ...worktrees.map((worktree) => worktree.path)],
     resolveCustomWorktreeVisibilitySources(repo, settings.worktreeVisibilityDefaults),
     resolveConfiguredWorktreeBasePaths(repo)
   )
   const detected = worktrees.map((worktree) => {
-    const meta = store.getWorktreeMeta(worktree.id)
+    const meta = readWorktreeMetaForHost(store, worktree.id, hostId) ?? hostMeta[worktree.id]
     const detected = toDetectedWorktree({
       repo,
       worktree,
@@ -140,5 +150,5 @@ export function buildDisconnectedDetectedWorktrees(
     })
     return applyMetadataFallbackVisibility(detected)
   })
-  return projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
+  return projectWorktreeLineageWithHostPeers(store, repo, detected)
 }

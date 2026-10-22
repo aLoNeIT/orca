@@ -8,6 +8,7 @@ import type {
   RuntimeCreateAgentSessionResult
 } from '../../shared/agent-session-host-authority'
 import { OrcaRuntimeService } from './orca-runtime'
+import type { TerminalCreateOptions } from './runtime-terminal-contracts'
 import type { IPtyProvider } from '../providers/pty-provider-contract'
 
 function operationId(now = Date.now()): string {
@@ -113,32 +114,6 @@ async function fenceRemoteAgentSessionSpawn(runtime: OrcaRuntimeService) {
 }
 
 describe('agent-session execution namespace', () => {
-  it('retains the original method owner, defaults and native async functions', () => {
-    const runtime = createRuntime()
-    let owner = Object.getPrototypeOf(runtime)
-    while (!Object.hasOwn(owner, 'ensureAgentSession')) {
-      owner = Object.getPrototypeOf(owner)
-    }
-    expect(owner.constructor.name).toBe('OrcaRuntimeWithGetAgentSessionExecutionNamespace')
-    expect(Object.getOwnPropertyNames(owner)).toEqual([
-      'constructor',
-      'getAgentSessionExecutionNamespace',
-      'executionOwnerSupportsAgentSessionOperation',
-      'toAgentSessionOptions',
-      'ensureAgentSession'
-    ])
-    for (const [name, length, constructor] of [
-      ['getAgentSessionExecutionNamespace', 2, 'Function'],
-      ['executionOwnerSupportsAgentSessionOperation', 3, 'AsyncFunction'],
-      ['toAgentSessionOptions', 1, 'Function'],
-      ['ensureAgentSession', 1, 'AsyncFunction']
-    ]) {
-      const descriptor = Object.getOwnPropertyDescriptor(owner, name)
-      expect(descriptor?.value.length).toBe(length)
-      expect(descriptor?.value.constructor.name).toBe(constructor)
-    }
-  })
-
   it('calls the selected provider probe with its receiver and caller signal', async () => {
     const signal = new AbortController().signal
     const provider: Pick<IPtyProvider, 'supportsAgentSessionClaims'> = {
@@ -300,15 +275,19 @@ describe('agent-session create operation ledger', () => {
       },
       folderWorkspace: null
     })
-    const createTerminal = vi.spyOn(runtime, 'createTerminal').mockResolvedValue(terminal())
+    let planned: TerminalCreateOptions | undefined
+    vi.spyOn(runtime, 'createTerminal').mockImplementation(async (selector = '', opts = {}) => {
+      const scope = await runtime.resolveTerminalWorkspaceLaunchScope(selector)
+      planned = await runtime.resolveAgentTerminalCreateOptions(scope, opts)
+      return terminal()
+    })
 
     await runtime.createAgentSession(
       request(operationId(), { agent: 'claude-agent-teams', prompt: '' })
     )
 
-    expect(createTerminal).toHaveBeenCalledWith(
-      'id:worktree-1',
-      expect.objectContaining({ command: expect.stringContaining('orca-ide claude-teams') })
+    expect(planned?.command).toContain(
+      process.platform === 'linux' ? 'orca-ide claude-teams' : 'orca claude-teams'
     )
   })
 

@@ -9,6 +9,10 @@ import type {
 import { HEADLESS_RUNTIME_WINDOW_ID } from '../../../shared/runtime-types'
 import type { RuntimeLeafRecord } from '../runtime-terminal-state-records'
 
+import { ORCA_LAYOUT_OWNER_IS_MAIN } from '../../../shared/layout-owner-switch'
+
+type Graph = RuntimeSyncWindowGraph
+
 /** The runtime indexes graph tabs by bare id, so duplicate ids cannot be routed safely. */
 function assertUniqueRuntimeGraphTabIds(tabs: readonly RuntimeSyncedTab[]): void {
   const seen = new Set<string>()
@@ -21,8 +25,23 @@ function assertUniqueRuntimeGraphTabIds(tabs: readonly RuntimeSyncedTab[]): void
 }
 
 export abstract class OrcaRuntimeWithSyncWindowGraph extends OrcaRuntimeWithAttachWindow {
+  /** Layout-owner builds: main's panes in place of the window's (session-tabs-inventory.ts). */
+  protected abstract withMainSurfaces(windowId: number, graph: Graph): Graph
   declare protected terminalGroupGridSizes?: RuntimeSyncWindowGraph['terminalGroupGridSizes']
   declare protected singleGroupWorkspaceGridSize?: RuntimeSyncWindowGraph['singleGroupWorkspaceGridSize']
+
+  // Why: a remounting pane publishes its leaf with no PTY until its transport reattaches the same
+  // session. Dropping it re-minted the handle every paired client was typing into (#23759).
+  private isLeafRemountingLivePty(
+    ptyId: string,
+    incomingPtyIds: ReadonlySet<string | null>
+  ): boolean {
+    return (
+      !incomingPtyIds.has(ptyId) &&
+      this.controllerKnowsPtyIsLive(ptyId) &&
+      this.getPtyLivenessVerdict(ptyId)?.status !== 'exited'
+    )
+  }
 
   shouldRelayTerminalBrowserOpens(): boolean {
     return this.authoritativeWindowId === HEADLESS_RUNTIME_WINDOW_ID
@@ -69,8 +88,11 @@ export abstract class OrcaRuntimeWithSyncWindowGraph extends OrcaRuntimeWithAtta
     }
     if (windowId === HEADLESS_RUNTIME_WINDOW_ID) {
       this.headlessGraphFallbackAvailable = true
+      this.servesHeadlessGraph = true
       this.rendererGeneration = null
     }
+    // Switch point: main's own panes stand in for the window's list of a workspace main owns.
+    graph = ORCA_LAYOUT_OWNER_IS_MAIN ? this.withMainSurfaces(windowId, graph) : graph
 
     if (graph.terminalGroupGridSizes) {
       // Merged, not replaced: a group in a worktree the window is not showing keeps its last size.
@@ -82,6 +104,7 @@ export abstract class OrcaRuntimeWithSyncWindowGraph extends OrcaRuntimeWithAtta
     if (graph.singleGroupWorkspaceGridSize) {
       this.singleGroupWorkspaceGridSize = graph.singleGroupWorkspaceGridSize
     }
+    this.activeGroupViewFacts.merge(graph.activeGroupByWorkspace)
     const graphWasReady = this.graphStatus === 'ready'
     const previousTabs = this.tabs
     const previousLeaves = this.leaves
@@ -110,6 +133,7 @@ export abstract class OrcaRuntimeWithSyncWindowGraph extends OrcaRuntimeWithAtta
     // Why: renderer reloads can briefly republish the same leaf with no ptyId;
     // keep live CLI handles usable while the UI graph rebuilds.
     const preserveLivePtysDuringReload = this.graphStatus === 'reloading'
+    const incomingPtyIds = new Set(lifecycleLeaves.map((leaf) => leaf.ptyId).filter(Boolean))
     for (const leaf of lifecycleLeaves) {
       if (leaf.ptyId) {
         if (leaf.parked) {
@@ -121,7 +145,10 @@ export abstract class OrcaRuntimeWithSyncWindowGraph extends OrcaRuntimeWithAtta
       const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
       const existing = this.leaves.get(leafKey)
       const ptyId =
-        preserveLivePtysDuringReload && leaf.ptyId === null && existing?.ptyId
+        leaf.ptyId === null &&
+        existing?.ptyId &&
+        (preserveLivePtysDuringReload ||
+          this.isLeafRemountingLivePty(existing.ptyId, incomingPtyIds))
           ? existing.ptyId
           : leaf.ptyId
       const ptyGeneration =

@@ -1,13 +1,18 @@
 // What a status feed reads of the host: its held sessions, their records, and where it reports.
 
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
-import type { AgentSessionStatusSummary } from '../../../shared/agent-session-wire'
+import type {
+  AgentSessionStatusEvent,
+  AgentSessionStatusSummary
+} from '../../../shared/agent-session-wire'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
 import type {
+  StructuredChatNamingFailure,
   StructuredAgentSessionEndedChild,
   StructuredAgentSessionProviderChild
 } from './structured-agent-session-host-types'
 import type { StructuredAgentSessionLogger } from './structured-agent-session-logger'
+import type { StructuredAgentSessionChildWorkProducer } from './structured-agent-session-subagent-rows'
 import type { StructuredAgentSessionStatusObserverOptions } from './structured-agent-session-status-observation'
 import type { StructuredAgentSessionStatusSink } from './structured-agent-session-status-ownership'
 
@@ -38,8 +43,36 @@ export type StructuredAgentSessionStatusFeedDeps = {
   /** Resolved on every call: the host builds this feed in a field initializer, before its own
    *  deps are assigned. The sink holds the session's child records; the summary reads them there. */
   statusSink?: () => StructuredAgentSessionStatusSink | undefined
-  /** The session's child records changed, so every other reader of them republishes. */
-  onChildWorkChanged?: (sessionId: string) => void
+  /** The session's child records changed, so every other reader of them republishes; `producer`
+   *  is the write path of the child whose report changed them. */
+  onChildWorkChanged?: (
+    sessionId: string,
+    producer?: StructuredAgentSessionChildWorkProducer
+  ) => void
+  namingActiveSessionIds?: () => string[]
+  /** The chat's last failed naming run, if any; the summary decides whether it still applies. */
+  namingFailure?: (sessionId: string) => StructuredChatNamingFailure | undefined
   /** The session's agent proved a start: its row's phase became `ready`. */
   onAgentStarted?: (sessionId: string) => void
+}
+
+export type StructuredAgentSessionStatusSubscriber = {
+  id: string
+  emit: (event: AgentSessionStatusEvent) => void
+}
+
+export type StatusPublication = {
+  summary: AgentSessionStatusSummary
+  firstInputSubmissionKey: string | null
+}
+
+/** Naming activity does not depend on any readable journal or retained summary. */
+export function structuredAgentSessionNamingSnapshot(
+  deps: StructuredAgentSessionStatusFeedDeps
+): AgentSessionStatusEvent {
+  return {
+    type: 'snapshot',
+    sessions: [],
+    namingActiveSessionIds: deps.namingActiveSessionIds?.() ?? []
+  }
 }

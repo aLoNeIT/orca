@@ -1,3 +1,4 @@
+import { journalItemEchoFields } from './journal-item-echo'
 import { isDeepStrictEqual } from 'node:util'
 import { agentJournalLinkageFields } from '../../../shared/agent-session-journal-producer'
 import type { AgentJournalCursor } from '../../../shared/agent-session-journal-types'
@@ -16,6 +17,7 @@ import {
 } from './journal-row-builders'
 import type {
   JournalLifecycleBatchInput,
+  JournalPlannedLifecycleBatchInput,
   JournalResolvedLifecycleBatchInput
 } from './journal-store-contracts'
 import type { JournalRow } from './journal-row-schema'
@@ -58,10 +60,28 @@ export class JournalLifecycleBatchAppender {
           ...this.planMutations(input, input.mutations)
         ]
       })
-      .then((rows) => {
-        const last = rows.at(-1)
-        return last ? { epoch: last.epoch, sequence: last.seq } : this.deps.cursor()
+      .then((rows) => this.cursorAfter(rows))
+  }
+
+  /** `append`, with every row chosen at the batch's own turn in the queue. */
+  appendPlanned(input: JournalPlannedLifecycleBatchInput): Promise<AgentJournalCursor> {
+    return this.deps
+      .enqueueRows(() => {
+        if (this.wasApplied(input.settlementId)) {
+          return []
+        }
+        const { mutations, dispatches } = input.plan()
+        return [
+          ...dispatches.map((dispatch) => journalDispatchRowBuilder(this.deps.state, dispatch)),
+          ...this.planMutations(input, mutations)
+        ]
       })
+      .then((rows) => this.cursorAfter(rows))
+  }
+
+  private cursorAfter(rows: readonly JournalRow[]): AgentJournalCursor {
+    const last = rows.at(-1)
+    return last ? { epoch: last.epoch, sequence: last.seq } : this.deps.cursor()
   }
 
   /** The rows a resolved settlement writes, planned at its own turn in the queue: its mutations,
@@ -136,6 +156,7 @@ export class JournalLifecycleBatchAppender {
           return !previouslyPlanned &&
             existing &&
             isDeepStrictEqual(existing.body, only.body) &&
+            (!Object.hasOwn(only, 'echoOf') || current.itemEchoes.has(itemId)) &&
             (only.linkage === undefined ||
               isDeepStrictEqual(
                 agentJournalLinkageFields(existing),
@@ -149,6 +170,7 @@ export class JournalLifecycleBatchAppender {
                   only.body,
                   {
                     ...only.linkage,
+                    ...journalItemEchoFields(only),
                     turnScope: only.turnScope,
                     fence: input.fence,
                     ownerFence: only.ownerFence,

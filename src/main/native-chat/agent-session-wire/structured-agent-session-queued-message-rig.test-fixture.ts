@@ -16,7 +16,10 @@ import type { AgentMessageSource } from '../../../shared/agent-session-message-s
 import { agentSessionMessagePayload } from '../../../shared/structured-agent-session-send-mutation'
 import { openTestAgentSessionRecordStore } from '../../runtime/agent-session-record-store-test-harness'
 import { AgentSessionRecoveryCapsule } from '../../runtime/agent-session-recovery-capsule'
-import { StructuredAgentSessionHost } from './structured-agent-session-host'
+import {
+  StructuredAgentSessionHost,
+  type StructuredAgentSessionHostDeps
+} from './structured-agent-session-host'
 import { rotateStructuredAgentSessionHostInstanceForTests } from './structured-agent-session-queued-pause'
 import {
   HOST_TEST_NOW as NOW,
@@ -39,7 +42,7 @@ export const QUEUED_RIG_CALLER = { callerKey: 'client-1' }
 type RigSendOptions = {
   internal?: true
   from?: AgentMessageSource
-  /** The model and effort the send carries. */
+  /** The choices the send carries, fingerprinted as a client's are. */
   carried?: Readonly<Record<string, string>>
 }
 
@@ -57,13 +60,15 @@ export async function createQueuedMessageTestRig(
     recoveryCapsule?: true
     /** Where the chat runs, when not the default worktree. */
     location?: AgentSessionExecutionLocation
+    /** How the host probes a recorded owner; absent answers indeterminate. */
+    probeOwner?: StructuredAgentSessionHostDeps['probeOwner']
   } = {}
 ) {
   const root = await mkdtemp(join(tmpdir(), 'orca-queued-messages-'))
   resetHostTestOperationIds()
   const store = await openTestAgentSessionRecordStore(root)
-  const provider = createQueuedRigProvider(store, options)
-  const { dispatch, compact, cancelTurn, closeSession } = provider
+  const provider = createQueuedRigProvider(store, options, () => host)
+  const { dispatch, compact, cancelTurn, closeSession, setOption } = provider
   const makeHost = () =>
     new StructuredAgentSessionHost({
       agents: claudeAndCodexDeclared(),
@@ -74,6 +79,7 @@ export async function createQueuedMessageTestRig(
       claimKeyId: 'key-1',
       mintSpawnToken: () => 'spawn-1',
       now: () => NOW,
+      ...(options.probeOwner ? { probeOwner: options.probeOwner } : {}),
       ...(options.idleSweep ? { idleSweep: options.idleSweep } : {}),
       ...(options.recoveryCapsule ? { recoveryCapsule: new AgentSessionRecoveryCapsule(root) } : {})
     })
@@ -191,7 +197,7 @@ export async function createQueuedMessageTestRig(
     await result
     await eventually(async () => {
       if (host.collaboratorsForTests().sessions.get(SESSION)?.child?.phase === 'starting') {
-        await emitStarted()
+        await proveProviderOpen()
       }
       expect((await submission(id))?.handedOverAt).toBeDefined()
     })
@@ -262,25 +268,17 @@ export async function createQueuedMessageTestRig(
     })
   }
 
-  /** The starting child proves its start, as a publish-first provider's `started` event does: the
-   *  host hands it what it held. */
+  /** The starting child proves its open before the host hands it queued work. */
   async function proveStart(): Promise<void> {
     await eventually(() =>
       expect(host.collaboratorsForTests().sessions.get(SESSION)?.child?.phase).toBe('starting')
     )
-    await emitStarted()
+    await proveProviderOpen()
   }
 
-  function emitStarted(): Promise<void> {
-    return host.handleAdapterEvent({
-      type: 'started',
-      sessionId: SESSION,
-      fence: store.getRecord(SESSION)!.lease.runtimeFence,
-      acquisitionGeneration: 'generation-1',
-      reportedOptions: { model: 'default' },
-      restoreSkippedOptions: [],
-      optionRevision: host.collaboratorsForTests().runtimeState.optionRevisions.current(SESSION)
-    })
+  async function proveProviderOpen(): Promise<void> {
+    provider.proveOpen()
+    await Promise.resolve()
   }
 
   async function dispose(): Promise<void> {
@@ -295,10 +293,10 @@ export async function createQueuedMessageTestRig(
       return host
     },
     dispatch,
+    setOption,
     cancelTurn,
     closeSession,
     compact,
-    setOption: provider.adapter.setOption,
     starts: provider.starts,
     holdNextStart: provider.holdNextStart,
     failNextStart: provider.failNextStart,
