@@ -36,19 +36,18 @@
 
 ## 2. 拿代码：二选一
 
-**A. 服务器直接 clone（推荐，能重新构建）**
+**A. 只搬部署包（推荐——服务器不编译时用这个，几 KB）**
+
+```bash
+tar czf orca-deploy.tgz -C /path/to/orca deploy --exclude=deploy/data --exclude=deploy/.env
+scp orca-deploy.tgz root@server:/srv/orca/ && ssh root@server 'tar xzf /srv/orca/orca-deploy.tgz -C /srv/orca'
+```
+
+**B. 服务器直接 clone（只有要在服务器上编译才需要）**
 
 ```bash
 git clone --depth 1 git@github.com:aLoNeIT/orca.git /srv/orca   # 私有库需部署密钥/token
 cd /srv/orca/deploy
-```
-
-**B. 只搬部署包（服务器不 clone，适合离线/内网）**
-
-```bash
-# 本地打包（只带编排，几 KB）
-tar czf orca-deploy.tgz -C /path/to/orca deploy --exclude=deploy/data --exclude=deploy/.env
-scp orca-deploy.tgz root@server:/srv/orca/ && ssh root@server 'tar xzf /srv/orca/orca-deploy.tgz -C /srv/orca'
 ```
 
 ---
@@ -70,25 +69,65 @@ cd /srv/orca/deploy
 
 ---
 
-## 4. 备镜像：三条路，选一条
+## 4. 备镜像：**服务器不必编译**
 
-| 方式 | 适用 | 命令 |
-| --- | --- | --- |
-| ① 服务器构建 | 服务器能出网、装得下 node 构建 | `./build.sh`（国内加 `NPM_REGISTRY=https://registry.npmmirror.com` 到 `.env`） |
-| ② 本地构建 + 推私有仓库 | 服务器不出网/带宽差，团队已有 SWR 习惯 | 改 `.env` 镜像名为仓库地址 → 本地 `./build.sh --push` → 服务器 `docker login` 后 `docker compose up -d` |
-| ③ `docker save` 离线搬运 | 完全离线 | 本地 `docker save orca-relay:latest orca-auth:latest \| gzip > orca-images.tgz` → `scp` → `gunzip -c orca-images.tgz \| docker load` |
+> 结论先说：服务器只要有 Docker，**不需要 Node、pnpm、源码，也不用跑 `build.sh`**。
+> relay 是 TypeScript 编译产物，编译发生在**构建镜像时**，构建可以在任何一台有 Docker 的机器上做（你的 Windows 本机也行）。服务器只负责 `pull` + 运行。
+
+| 方式 | 服务器需要什么 | 耗时 | 什么时候用 |
+| --- | --- | --- | --- |
+| ① **本地构建 + 推私有仓库**（推荐） | 只需 `docker login` + `pull` | 秒级 | 团队已有 SWR/ACR；要「本地验证过的镜像 = 线上跑的镜像」 |
+| ② 服务器自己构建 | 源码 + Docker + 能访问 node/npm 源 | 2–3 分钟 | 服务器能出网、只有这一台机器、不想维护仓库 |
+| ③ `docker save` 离线搬运 | 只解压 tar | 视带宽 | 服务器完全离线/内网 |
+
+### 推荐路径：本地构建 → 推仓库 → 服务器只拉
+
+```bash
+# 1) 本地：镜像名写成仓库地址，并打版本 tag（别用 latest）
+#    deploy/.env
+#      ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-relay:v1.4.237
+#      ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-auth:v1.4.237
+
+# 2) 本地构建并推送（需先 docker login）
+cd deploy && ./build.sh --push
+
+# 3) 服务器：只拉不编
+docker login swr.cn-east-3.myhuaweicloud.com
+cd /srv/orca/deploy && docker compose pull && docker compose up -d
+```
+
+服务器上**最小部署包**（不构建就只要这几个文件，Dockerfile / build.sh / 源码都可以不搬）：
+
+```
+deploy/
+├── docker-compose.yml
+├── init.sh
+├── orca-auth
+├── nginx.example.conf
+└── .env              ← init.sh 生成，含密钥，单独 scp，别走 git
+```
+
+### 方式②：确实想在服务器上编译
+
+```bash
+cd /srv/orca/deploy && ./build.sh        # 需要完整仓库（含 cloud/）
+```
 
 > 构建需要 Docker 能访问 Alpine 软件源与 npm 源；国内网络下 `apk` 偶发 `TLS: unspecified error`，**重跑一次即可**（实测第二次就过）。
 > relay 的 pnpm 版本由 `cloud/package.json` 的 `packageManager`（当前 `pnpm@12`）决定，镜像里用 npm 直接安装，不走 corepack。
 
-②③ 要先在本地构建过；镜像名写进 `.env`：
+### 方式③：离线搬运
 
-```ini
-ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-relay:v1
-ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-auth:v1
+```bash
+# 本地
+docker save orca-relay:v1.4.237 orca-auth:v1.4.237 | gzip > orca-images.tgz
+scp orca-images.tgz root@server:/srv/orca/
+# 服务器
+gunzip -c orca-images.tgz | docker load
 ```
 
-> 用 tag（`v1`/`v2`）而不是 `latest`，回滚就是改 tag + `up -d`。
+> 三种方式都建议用**版本 tag**（`v1.4.237` 而不是 `latest`）：回滚就是 `.env` 改回旧 tag + `up -d`，代码不用动。
+> 服务器自建镜像和本地镜像**不保证逐字节相同**（依赖解析、基础镜像浮动），所以「本地验过再推仓库」比「服务器现场编译」更可控。
 
 ---
 
@@ -166,7 +205,8 @@ curl -fsS -o /dev/null -w '%{http_code}\n' https://relay.yourteam.com/health
 | 已配对电脑 | `./orca-auth device list`（含配对手机数、最后活跃） |
 | 全员强制重登 | `./orca-auth sessions revoke-all --confirm`（轮换签名密钥，所有人 token 失效） |
 | 备份 | `docker compose stop && tar czf orca-data-$(date +%F).tgz data/ && docker compose start` |
-| 升级 | 换 tag 或 `./build.sh` → `docker compose up -d`（数据在 `data/`，不动） |
+| 升级（用仓库镜像，推荐） | 本地 `./build.sh --push` 推新 tag → 服务器改 `.env` 的 tag → `docker compose pull && docker compose up -d` |
+| 升级（服务器自建镜像） | `git pull && ./build.sh && docker compose up -d` |
 | 回滚 | `.env` 改回旧 tag → `docker compose up -d` |
 
 **唯一不能丢的东西**：`deploy/data/`（两个 SQLite + `auth/keys/signing-key.pem` + 交付存档）。删了 = 账号和配对全没。
