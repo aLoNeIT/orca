@@ -5,7 +5,7 @@
 #   2. 入口以 root 先 chown 数据卷、再 su-exec 降权（支持宿主机绑定目录）。
 #
 # 构建（在 deploy/ 目录，或直接用 ./build.sh）：
-#   docker build -f Dockerfile.relay -t orca-relay:latest ..
+#   docker build -f Dockerfile.relay -t orca:relay ..
 # 国内构建可加：--build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 # ---------- Stage 1: 构建 relay ----------

@@ -1,7 +1,7 @@
 # Orca 自托管一体化部署：relay 与 auth 各自独立镜像/容器（HTTPS 由宿主机 Nginx 处理）。
 #
 # 编排只引用镜像名（不做本地编译）——镜像名在 .env 里配置（ORCA_RELAY_IMAGE / ORCA_AUTH_IMAGE），
-# 可用私有仓库完整地址（如 swr.cn-east-3.myhuaweicloud.com/team/orca-relay:v1）。
+# 可用私有仓库完整地址（如 swr.cn-east-3.myhuaweicloud.com/team/orca:relay-v1）。
 # 镜像构建用 ./build.sh（构建 + 可选 --push），或在别处构建后 docker push / docker save 搬运。
 #
 # 对外入口只有一个：auth 容器的宿主端口（ORCA_AUTH_PORT，默认 8080）。
@@ -22,7 +22,7 @@ name: orca
 
 services:
   relay:
-    image: ${ORCA_RELAY_IMAGE:-orca-relay:latest}
+    image: ${ORCA_RELAY_IMAGE:-orca:relay}
     environment:
       PORT: "8080"
       ORCA_RELAY_ROLE: combined
@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
 
   auth:
-    image: ${ORCA_AUTH_IMAGE:-orca-auth:latest}
+    image: ${ORCA_AUTH_IMAGE:-orca:auth}
     environment:
       PORT: "8080"
       ORCA_RELAY_PUBLIC_URL: ${ORCA_RELAY_PUBLIC_URL}

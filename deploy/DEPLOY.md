@@ -11,7 +11,7 @@
 | --- | --- |
 | 代码基线 | `main @ 4c569ea7`（已合并上游 v1.4.237 及其后 761 个提交），工作区干净 |
 | 部署编排 | `deploy/` 13 个文件齐全，`docker compose config` 语法通过 |
-| 镜像 | 本机已有 `orca-relay:latest`（243MB）/ `orca-auth:latest`（172MB） |
+| 镜像 | 本机已有 `orca:relay`（243MB）/ `orca:auth`（172MB），另有版本 tag `orca:relay-v1.4.237` / `orca:auth-v1.4.237` |
 | 数据目录 | `deploy/data/{auth,relay}` 存在，SQLite + 签名密钥 + 交付存档可读 |
 | 本地容器 | `orca-relay-1` / `orca-auth-1` 已停止（演示验证完毕） |
 | 本地 `.env` | 仍是**演示配置**（`http://localhost:8080`），上服务器必须重新生成 |
@@ -83,10 +83,10 @@ cd /srv/orca/deploy
 ### 推荐路径：本地构建 → 推仓库 → 服务器只拉
 
 ```bash
-# 1) 本地：镜像名写成仓库地址，并打版本 tag（别用 latest）
+# 1) 本地：镜像名写成仓库地址 + 版本 tag（单仓库双 tag：仓库名 orca 固定，tag 区分 relay/auth）
 #    deploy/.env
-#      ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-relay:v1.4.237
-#      ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-auth:v1.4.237
+#      ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:relay-v1.4.237
+#      ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:auth-v1.4.237
 
 # 2) 本地构建并推送（需先 docker login）
 cd deploy && ./build.sh --push
@@ -100,8 +100,10 @@ cd /srv/orca/deploy && docker compose pull && docker compose up -d
 
 | 镜像 | digest |
 | --- | --- |
-| `.../xryf/orca-relay:v1.4.237` | `sha256:59574a88d7129720d2313ace33fc3a506aacee201f4d83a1ea6e32d8fe585443` |
-| `.../xryf/orca-auth:v1.4.237` | `sha256:62fd31771fba7d7f80b79ce02adde2250c19e78cea5885a68cd3c83635399497` |
+| `.../xryf/orca:relay-v1.4.237` | `sha256:59574a88d7129720d2313ace33fc3a506aacee201f4d83a1ea6e32d8fe585443` |
+| `.../xryf/orca:auth-v1.4.237` | `sha256:62fd31771fba7d7f80b79ce02adde2250c19e78cea5885a68cd3c83635399497` |
+
+> 滚动 tag `.../xryf/orca:relay` / `.../xryf/orca:auth` 同步在仓库里，指向同一次构建；部署请用版本 tag。
 
 服务器上**最小部署包**（不构建就只要这几个文件，Dockerfile / build.sh / 源码都可以不搬）：
 
@@ -127,13 +129,13 @@ cd /srv/orca/deploy && ./build.sh        # 需要完整仓库（含 cloud/）
 
 ```bash
 # 本地
-docker save orca-relay:v1.4.237 orca-auth:v1.4.237 | gzip > orca-images.tgz
+docker save orca:relay-v1.4.237 orca:auth-v1.4.237 | gzip > orca-images.tgz
 scp orca-images.tgz root@server:/srv/orca/
 # 服务器
 gunzip -c orca-images.tgz | docker load
 ```
 
-> 三种方式都建议用**版本 tag**（`v1.4.237` 而不是 `latest`）：回滚就是 `.env` 改回旧 tag + `up -d`，代码不用动。
+> 三种方式都建议用**版本 tag**（`orca:relay-v1.4.237` 而不是 `orca:relay`）：回滚就是 `.env` 改回旧 tag + `up -d`，代码不用动。
 > 服务器自建镜像和本地镜像**不保证逐字节相同**（依赖解析、基础镜像浮动），所以「本地验过再推仓库」比「服务器现场编译」更可控。
 
 ---

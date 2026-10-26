@@ -1,7 +1,7 @@
 # Orca Auth 镜像（自研多用户认证服务，零 npm 依赖、零编译步骤，复制即运行）。
 #
 # 构建（在 deploy/ 目录，或直接用 ./build.sh）：
-#   docker build -f Dockerfile.auth -t orca-auth:latest ../auth
+#   docker build -f Dockerfile.auth -t orca:auth ../auth
 # （构建上下文就是 auth/ 目录：lib.mjs / server.mjs / cli.mjs 三个文件）
 
 FROM node:24-alpine

@@ -84,11 +84,12 @@ ORCA_AUTH_PORT=8080
 ORCA_DATA_DIR=./data
 
 # 镜像名（compose 直接引用，不做本地编译；构建用 ./build.sh）
-# 可改为私有仓库完整地址，例如：
-#   ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-relay:v1.4.237
-#   ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-auth:v1.4.237
-ORCA_RELAY_IMAGE=orca-relay:latest
-ORCA_AUTH_IMAGE=orca-auth:latest
+# 单仓库双 tag：orca:relay / orca:auth 是滚动 tag；build.sh 另打版本 tag
+# （orca:relay-v1.4.237），部署建议钉版本 tag。也可改为私有仓库完整地址，例如：
+#   ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:relay-v1.4.237
+#   ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:auth-v1.4.237
+ORCA_RELAY_IMAGE=orca:relay
+ORCA_AUTH_IMAGE=orca:auth
 
 # 组织名（客户端显示用，可选修改）
 # ORCA_AUTH_ORG_ID=team
