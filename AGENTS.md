@@ -67,3 +67,28 @@ For a failed GitHub Actions run, inspect the failed jobs and retry with `gh run 
 # Tests
 
 Avoid adding low-value tests. These might be fine for development but offer low value when checked in. [Anti-patterns](./docs/reference/test-antipatterns.md)
+
+# Gitee Mirror (fork-local — never send this section upstream)
+
+This fork is also mirrored to `gitee` = `git@gitee.com:alonetech/orca.git`. Keep that section last:
+it is fork-local and must stay merge-clean against upstream.
+
+The mirror holds a **single-commit snapshot, never history**: the local clone is shallow (boundary
+`36b2ed4d`), Gitee rejects shallow history (`shallow update not allowed`), and completing the
+history (~1.7 GB) exceeds Gitee's free 500 MB quota.
+
+After every push to `origin` — GitHub stays canonical and `main`'s tracking branch — refresh the mirror:
+
+```bash
+SNAP=$(git commit-tree refs/heads/main^{tree} -m "snapshot $(git rev-parse --short main) $(date +%F)")
+git push gitee "$SNAP:refs/heads/main" --force
+git ls-remote gitee refs/heads/main   # must print $SNAP
+```
+
+- `--force` is required and expected: each snapshot is a parentless root, so refs never fast-forward.
+- Verify **content**, not history: `git rev-parse main^{tree}` must equal `<gitee-sha>^{tree}`.
+- Never `git push gitee --all`, `--tags`, or another branch; never point `main`'s upstream at `gitee`;
+  never expect `git log` to work on the Gitee side.
+- Sync is the last step of any task that changed the repository; read-only tasks skip it.
+- If Gitee is unreachable, report the failure and leave `origin` intact — do not rewrite local history
+  to work around it.
