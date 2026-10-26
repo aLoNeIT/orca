@@ -96,6 +96,13 @@ docker login swr.cn-east-3.myhuaweicloud.com
 cd /srv/orca/deploy && docker compose pull && docker compose up -d
 ```
 
+已推送版本（2026-10-26，可直接用）：
+
+| 镜像 | digest |
+| --- | --- |
+| `.../xryf/orca-relay:v1.4.237` | `sha256:59574a88d7129720d2313ace33fc3a506aacee201f4d83a1ea6e32d8fe585443` |
+| `.../xryf/orca-auth:v1.4.237` | `sha256:62fd31771fba7d7f80b79ce02adde2250c19e78cea5885a68cd3c83635399497` |
+
 服务器上**最小部署包**（不构建就只要这几个文件，Dockerfile / build.sh / 源码都可以不搬）：
 
 ```

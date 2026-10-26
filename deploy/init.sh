@@ -85,8 +85,8 @@ ORCA_DATA_DIR=./data
 
 # 镜像名（compose 直接引用，不做本地编译；构建用 ./build.sh）
 # 可改为私有仓库完整地址，例如：
-#   ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/team/orca-relay:v1
-#   ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/team/orca-auth:v1
+#   ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-relay:v1.4.237
+#   ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca-auth:v1.4.237
 ORCA_RELAY_IMAGE=orca-relay:latest
 ORCA_AUTH_IMAGE=orca-auth:latest
 
