@@ -1,7 +1,7 @@
 # Orca 自托管部署手册（Runbook）
 
 > 适用：把 `relay + auth` 双容器部署到一台 Linux 服务器，10 人团队手机远程访问电脑。
-> 全部命令在 **`deploy/` 目录**下执行。本文件与 `docker-compose.yml` / `init.sh` / `build.sh` 同源同版本（提交 `35e12ff4`，relay 上游 v1.4.237）。
+> 全部命令在 **`deploy/` 目录**下执行。本文件与 `docker-compose.yml` / `init.sh` / `build.sh` 同源同版本（提交 `4c569ea7`，relay 上游 v1.4.237 + 761 提交）。
 
 ---
 
@@ -9,7 +9,7 @@
 
 | 核对项 | 结果 |
 | --- | --- |
-| 代码基线 | `main @ 35e12ff4`（已合并上游 v1.4.237），工作区干净 |
+| 代码基线 | `main @ 4c569ea7`（已合并上游 v1.4.237 及其后 761 个提交），工作区干净 |
 | 部署编排 | `deploy/` 13 个文件齐全，`docker compose config` 语法通过 |
 | 镜像 | 本机已有 `orca-relay:latest`（243MB）/ `orca-auth:latest`（172MB） |
 | 数据目录 | `deploy/data/{auth,relay}` 存在，SQLite + 签名密钥 + 交付存档可读 |
