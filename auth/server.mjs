@@ -49,7 +49,7 @@ console.log(`[auth] relay upstream: ${relayUpstream.host}:${relayUpstream.port}`
 
 // ============================== HTTP 小工具 ==============================
 
-function send(res, status, body, contentType) {
+function send(res, status, body, contentType, extraHeaders) {
   const buf = Buffer.from(body)
   res.writeHead(status, {
     'content-type': contentType,
@@ -57,13 +57,15 @@ function send(res, status, body, contentType) {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'DENY',
-    'referrer-policy': 'no-referrer'
+    'referrer-policy': 'no-referrer',
+    ...extraHeaders
   })
   res.end(buf)
 }
 
 const sendJson = (res, status, obj) => send(res, status, JSON.stringify(obj), 'application/json')
-const sendHtml = (res, status, html) => send(res, status, html, 'text/html; charset=utf-8')
+const sendHtml = (res, status, html) =>
+  send(res, status, html, 'text/html; charset=utf-8', { 'content-security-policy': PAGE_CSP_HEADER })
 
 function redirect(res, location) {
   res.writeHead(302, { location, 'cache-control': 'no-store' })
@@ -206,6 +208,17 @@ function authenticate(req) {
 
 // ============================== 页面 ==============================
 
+// 页面无脚本、无外部资源；form-action 必须覆盖登录成功后 302 到 http://127.0.0.1:<port>/auth/callback
+// —— Chromium 会校验表单提交的整条重定向链，只写 'self' 会把回环回调判为违规并阻止提交。
+const PAGE_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "form-action 'self' http://127.0.0.1:*",
+  "base-uri 'none'"
+].join('; ')
+// frame-ancestors 通过 meta 下发会被浏览器忽略并告警，只能走响应头
+const PAGE_CSP_HEADER = `${PAGE_CSP}; frame-ancestors 'none'`
+
 const BASE_CSS = `
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -273,7 +286,7 @@ function layout({ title, body }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="${PAGE_CSP}">
 <title>${esc(title)}</title>
 <style>${BASE_CSS}</style>
 </head>

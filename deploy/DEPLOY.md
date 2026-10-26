@@ -101,7 +101,11 @@ cd /srv/orca/deploy && docker compose pull && docker compose up -d
 | 镜像 | digest |
 | --- | --- |
 | `.../xryf/orca:relay-v1.4.237` | `sha256:59574a88d7129720d2313ace33fc3a506aacee201f4d83a1ea6e32d8fe585443` |
-| `.../xryf/orca:auth-v1.4.237` | `sha256:62fd31771fba7d7f80b79ce02adde2250c19e78cea5885a68cd3c83635399497` |
+| `.../xryf/orca:auth-v1.4.237` | `sha256:16db05cce805a3b8684f257a0ac3726c8cac0f39fbc2329ec936a6a298198aad` |
+
+> `auth` 已于 2026-10-26 重建覆盖（修复登录页 CSP `form-action` 阻断），relay 未变。
+> 精确引用可用 `.../xryf/orca:auth-v1.4.237.1`（同一 digest）；只改 auth 时执行
+> `docker compose pull auth && docker compose up -d auth` 即可，不必全量拉取。
 
 > 滚动 tag `.../xryf/orca:relay` / `.../xryf/orca:auth` 同步在仓库里，指向同一次构建；部署请用版本 tag。
 
