@@ -4,7 +4,8 @@ import { createHash, createHmac } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { exportJWK, generateKeyPair, jwtVerify, SignJWT } from 'jose'
@@ -719,6 +720,30 @@ describe('served relay URL', () => {
     const result = await closed
     expect(result.code).toBe(4409)
     expect(result.reason).not.toContain('http')
+  })
+
+  it('admits a combined control whose re-assigned epoch moved past 1', async () => {
+    const keyPair = nacl.box.keyPair()
+    const hostId = createHash('sha256').update(keyPair.publicKey).digest('base64url').slice(0, 16)
+    const response = await fetch(`${relayUrl}/v1/assign`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await relayToken('orca-relay', hostId)}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ v: 1, relayHostId: hostId })
+    })
+    expect(response.status).toBe(200)
+    expect(((await response.json()) as { assignmentEpoch: number }).assignmentEpoch).toBe(1)
+    // A second assign is paced by retry-after; bump the durable row the way it would instead.
+    const database = new DatabaseSync(join(relayDataDirectory, 'orca-relay.sqlite'))
+    database
+      .prepare('UPDATE relay_assignments SET assignment_epoch = 2 WHERE relay_host_id = ?')
+      .run(hostId)
+    database.close()
+    const control = await openHostControl({ keyPair, assignmentEpoch: 2 })
+    expect(control.ack).toMatchObject({ type: 'host-hello-ack', v: 1 })
+    control.socket.close()
   })
 
   it('restates a pending connection to the rebound control, detailed only when advertised', async () => {

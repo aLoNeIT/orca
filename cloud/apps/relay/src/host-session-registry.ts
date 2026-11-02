@@ -1619,17 +1619,16 @@ export class HostSessionRegistry {
       return
     }
     const assignmentReadStartedAt = performance.now()
-    // Combined is staging-only compatibility; stamped cells require the durable director epoch.
+    // Combined is staging-only upstream, but a self-hosted re-assign moves past epoch 1: verify the row instead of refusing.
     const assignmentValid =
       admittedFromMemory ||
-      (this.config.role === 'combined'
-        ? hello.data.assignmentEpoch === 1
-        : await this.assignments.verifyCellAssignment({
-            userId: identity.sub,
-            relayHostId: identity.relayHostId,
-            cellId: this.config.cellId,
-            assignmentEpoch: hello.data.assignmentEpoch
-          }))
+      (this.config.role === 'combined' && hello.data.assignmentEpoch === 1) ||
+      (await this.assignments.verifyCellAssignment({
+        userId: identity.sub,
+        relayHostId: identity.relayHostId,
+        cellId: this.config.cellId,
+        assignmentEpoch: hello.data.assignmentEpoch
+      }))
     // The database answer decides; the lease is only compared with it.
     if (leaseShadow && leaseCheck && !admittedFromMemory) {
       leaseShadow.record(
