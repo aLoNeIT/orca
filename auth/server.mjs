@@ -24,7 +24,8 @@ const signingKey = lib.loadOrCreateSigningKey(cfg.authDir)
 const TTL_SEC = {
   access: 60 * 60,              // 1 小时
   refresh: 90 * 24 * 60 * 60,   // 90 天
-  relay: 15 * 60                // 15 分钟（relay 侧建议值，客户端会自动续）
+  relay: 15 * 60,               // 15 分钟（relay 侧建议值，客户端会自动续）
+  connector: 5 * 60             // 5 分钟，与官方 fake-connector-cloud 夹具一致
 }
 const REFRESH_GRACE_MS = 5 * 60_000 // refresh 重放宽限期
 const LOOPBACK_CALLBACK = /^http:\/\/127\.0\.0\.1:\d{1,5}\/auth\/callback$/
@@ -512,6 +513,17 @@ async function handleAuthApi(req, res, url) {
     )
     // 客户端 zod .strict()：响应必须严格只有这两个字段
     return sendJson(res, 200, { relayToken, expiresAt: Date.now() + TTL_SEC.relay * 1000 })
+  }
+
+  if (op === 'connector-token') {
+    // cloud connector 安装用（connector-token-mint.ts）。自托管没有官方 connector 服务，
+    // 这里只按契约签发不透明票据，等 ORCA_CONNECTOR_URL 指向自建 connector 时才被消费。
+    const { machineId } = body
+    if (machineId !== undefined && (typeof machineId !== 'string' || machineId.length > 256)) {
+      return sendJson(res, 400, { error: 'bad_request' })
+    }
+    const connectorToken = lib.randB64u(24)
+    return sendJson(res, 200, { connectorToken, expiresAt: Date.now() + TTL_SEC.connector * 1000 })
   }
 
   return sendJson(res, 404, { error: 'not_found' })
