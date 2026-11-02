@@ -1,5 +1,4 @@
 import type {
-  StructuredAgentSessionAppendOptions,
   StructuredAgentSessionEventTarget,
   StructuredAgentSessionHistoryJournal,
   StructuredAgentSessionLinkageJournal,
@@ -10,51 +9,44 @@ import type {
   StructuredAgentSessionSinkWatermarks
 } from './structured-agent-session-event-sink'
 import type { StructuredAgentSessionTransitionJournal } from './structured-agent-session-transition'
-import { StructuredAgentSessionFinalTailReservation } from './structured-agent-session-final-tail-reservation'
 
 export type StructuredAgentSessionSinkOperation = {
   sequence: number
   bytes: number
-  lifecycleBytes?: number
-  lifecycle?: boolean
-  finalTail?: true
   /** Only publications coalesce by key; replacing journal writes would reorder them behind later work. */
   publicationKey?: string
   /** Handover synchronously joins the journal queue in submission order. */
   run: (target: StructuredAgentSessionEventTarget) => Promise<unknown> | void
 }
 
-type Admitted = StructuredAgentSessionSinkOperation & {
-  superseded?: boolean
-  releaseFinalTail?: () => void
-}
+type Admitted = StructuredAgentSessionSinkOperation & { superseded?: boolean }
+
+const MAX_PRE_CONTROL_OPERATIONS = 1_024
+const MAX_PRE_CONTROL_BYTES = 32 * 1024 * 1024
 
 export type StructuredAgentSessionDrainWaiter = {
   through: number
   resolve: (result: StructuredAgentSessionSinkBarrier) => void
 }
 
-/** Buffer only before bind, then hand writes directly to the journal in issuance order.
- * Pressure counts all admitted unsettled operations, wherever they wait. */
+/** Hand writes to the journal in issuance order; bound startup work until reading can pause. */
 export class StructuredAgentSessionSinkQueue {
   private readingControl: StructuredAgentSessionReadingControl | undefined
+  private hasBoundReadingControl: boolean
   private target: StructuredAgentSessionEventTarget | null = null
   private closed = false
   private failure: { error: unknown } | null = null
   private queuedBytes = 0
   private queuedOperations = 0
-  private lifecycleQueuedBytes = 0
-  private lifecycleQueuedOperations = 0
   private backpressured = false
   private acceptedSequence = 0
   private settledSequence = 0
   /** Closing drops only buffered operations after this handover sequence. */
   private handedOverSequence = 0
   private handedOverSettled: Promise<void> = Promise.resolve()
-  private readonly buffered = new Map<string | number, Admitted>()
+  private readonly buffered: Admitted[] = []
   private readonly waitingPublications = new Map<string, Admitted>()
   private readonly waiters: StructuredAgentSessionDrainWaiter[] = []
-  private readonly finalTail = new StructuredAgentSessionFinalTailReservation()
 
   constructor(
     private readonly deps: {
@@ -68,6 +60,7 @@ export class StructuredAgentSessionSinkQueue {
     }
   ) {
     this.readingControl = deps.readingControl
+    this.hasBoundReadingControl = deps.readingControl !== undefined
   }
 
   state = (): StructuredAgentSessionSinkState => ({
@@ -90,6 +83,7 @@ export class StructuredAgentSessionSinkQueue {
 
   bindReadingControl(control: StructuredAgentSessionReadingControl): () => void {
     this.readingControl = control
+    this.hasBoundReadingControl = true
     if (this.backpressured) {
       control.pauseReading()
     }
@@ -105,9 +99,7 @@ export class StructuredAgentSessionSinkQueue {
       return
     }
     this.target = target
-    const buffered = [...this.buffered.values()]
-    this.buffered.clear()
-    for (const operation of buffered) {
+    for (const operation of this.buffered.splice(0)) {
       this.handOver(operation, target)
     }
   }
@@ -119,7 +111,6 @@ export class StructuredAgentSessionSinkQueue {
   close(): void {
     this.closed = true
     this.dropBuffered()
-    this.finalTail.close()
     this.updateBackpressure()
   }
 
@@ -141,8 +132,7 @@ export class StructuredAgentSessionSinkQueue {
   }
 
   submit(
-    operation: Omit<StructuredAgentSessionSinkOperation, 'sequence'>,
-    options: StructuredAgentSessionAppendOptions = {}
+    operation: Omit<StructuredAgentSessionSinkOperation, 'sequence'>
   ): StructuredAgentSessionSinkAdmission {
     if (this.closed) {
       return { accepted: false, reason: 'closed' }
@@ -151,51 +141,37 @@ export class StructuredAgentSessionSinkQueue {
       return { accepted: false, reason: 'failed' }
     }
     const key = operation.publicationKey
+    const replaceAt =
+      key === undefined ? -1 : this.buffered.findIndex((queued) => queued.publicationKey === key)
     const replaced =
-      key === undefined ? undefined : (this.buffered.get(key) ?? this.waitingPublications.get(key))
-    const finalTail = operation.finalTail === true
-    const lifecycle = !finalTail && (operation.lifecycle ?? options.lifecycle === true)
-    const lifecycleBytes = lifecycle ? (operation.lifecycleBytes ?? operation.bytes) : 0
-    const nextBytes = this.queuedBytes - (replaced?.bytes ?? 0) + operation.bytes
-    const nextOperations = this.queuedOperations + (replaced ? 0 : 1)
-    const nextLifecycleBytes =
-      this.lifecycleQueuedBytes - (replaced ? lifecycleCost(replaced) : 0) + lifecycleBytes
-    const nextLifecycleOperations =
-      this.lifecycleQueuedOperations - (replaced?.lifecycle ? 1 : 0) + (lifecycle ? 1 : 0)
-    // Bytes pace input; operation counts determine admission refusal.
-    const exceedsOrdinary =
-      !finalTail && !lifecycle && nextOperations > this.deps.watermarks.maxQueuedOperations
-    const exceedsLifecycle =
-      lifecycle && nextLifecycleOperations > this.deps.watermarks.maxLifecycleQueuedOperations
-    if (!options.criticalRoot && (exceedsOrdinary || exceedsLifecycle)) {
-      this.setBackpressure(true)
-      return { accepted: false, reason: 'backpressure' }
-    }
-    const releaseFinalTail =
-      finalTail && key === undefined ? this.finalTail.reserve(operation.bytes) : undefined
-    if (finalTail && !releaseFinalTail) {
-      this.fail(new Error('structured agent-session final tail exceeded its reserved capacity'))
+      replaceAt >= 0
+        ? this.buffered[replaceAt]
+        : key === undefined
+          ? undefined
+          : this.waitingPublications.get(key)
+    const queuedBytes =
+      this.queuedBytes + operation.bytes - (replaceAt >= 0 ? (replaced?.bytes ?? 0) : 0)
+    const queuedOperations = this.queuedOperations + (replaceAt >= 0 ? 0 : 1)
+    if (
+      !this.hasBoundReadingControl &&
+      (queuedBytes > MAX_PRE_CONTROL_BYTES || queuedOperations > MAX_PRE_CONTROL_OPERATIONS)
+    ) {
+      this.fail(new Error('Agent journal queue capacity exceeded before reading control bound'))
       return { accepted: false, reason: 'failed' }
     }
-    const accepted: Admitted = {
-      ...operation,
-      sequence: ++this.acceptedSequence,
-      lifecycle,
-      lifecycleBytes,
-      releaseFinalTail: releaseFinalTail ?? undefined
-    }
-    if (replaced && !this.buffered.delete(key ?? replaced.sequence)) {
+    const accepted: Admitted = { ...operation, sequence: ++this.acceptedSequence }
+    if (replaceAt >= 0) {
+      this.buffered.splice(replaceAt, 1)
+    } else if (replaced) {
       // Superseded publications still settle in order as no-ops.
       replaced.superseded = true
     }
-    this.queuedBytes = nextBytes
-    this.queuedOperations = nextOperations
-    this.lifecycleQueuedBytes = nextLifecycleBytes
-    this.lifecycleQueuedOperations = nextLifecycleOperations
+    this.queuedBytes = queuedBytes
+    this.queuedOperations = queuedOperations
     if (this.target) {
       this.handOver(accepted, this.target)
     } else {
-      this.buffered.set(key ?? accepted.sequence, accepted)
+      this.buffered.push(accepted)
     }
     this.updateBackpressure()
     return { accepted: true }
@@ -228,28 +204,20 @@ export class StructuredAgentSessionSinkQueue {
   }
 
   private settle(operation: Admitted): void {
-    if (!operation.superseded) {
-      this.release(operation)
-    }
+    this.release(operation)
     this.settledSequence = Math.max(this.settledSequence, operation.sequence)
     this.updateBackpressure()
     this.settleWaiters()
   }
 
   private release(operation: Admitted): void {
-    operation.releaseFinalTail?.()
     this.queuedBytes = Math.max(0, this.queuedBytes - operation.bytes)
     this.queuedOperations = Math.max(0, this.queuedOperations - 1)
-    if (operation.lifecycle) {
-      this.lifecycleQueuedBytes = Math.max(0, this.lifecycleQueuedBytes - lifecycleCost(operation))
-      this.lifecycleQueuedOperations = Math.max(0, this.lifecycleQueuedOperations - 1)
-    }
   }
 
   /** Buffered drops settle only after earlier handed-over writes so barriers cannot overtake them. */
   private dropBuffered(): void {
-    const dropped = [...this.buffered.values()]
-    this.buffered.clear()
+    const dropped = this.buffered.splice(0)
     for (const operation of dropped) {
       this.release(operation)
     }
@@ -307,13 +275,8 @@ export class StructuredAgentSessionSinkQueue {
       this.deps.onFailed?.(error)
     }
     this.dropBuffered()
-    this.finalTail.close()
     this.updateBackpressure()
   }
-}
-
-function lifecycleCost(operation: StructuredAgentSessionSinkOperation): number {
-  return operation.lifecycle ? (operation.lifecycleBytes ?? operation.bytes) : 0
 }
 
 function runNow(run: () => Promise<unknown> | void): Promise<unknown> {
