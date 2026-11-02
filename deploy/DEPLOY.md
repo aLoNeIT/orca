@@ -21,6 +21,51 @@
 
 ---
 
+## 0.1 为什么必须是 combined（以及 fork-local 补丁）
+
+上游把 `ORCA_RELAY_ROLE=combined` 明确标为 **staging-only**（`cloud/apps/relay/src/app.ts:744`
+「the staging-only combined service」；`host-session-registry.ts` 原注释「Combined is staging-only
+compatibility」）。官方生产架构是 **director + cell 分离**，每个 cell 跑在 GCP 上。
+
+**但自托管（没有 GCP 身份）跑不了分离架构**，三条硬约束：
+
+| 约束 | 代码位置 | 后果 |
+| --- | --- | --- |
+| cell 心跳 token 的来源硬编码为 GCP metadata（`METADATA_IDENTITY_ENDPOINT`，无 env 可配） | `google-metadata-identity-token.ts:5-22` ← `index.ts:156` | 没有 GCP metadata 就取不到 token，心跳发不出去；绕过必须在容器里 mock metadata 服务或改代码 |
+| director 校验 cell 心跳 token 时硬编码 `iss=https://accounts.google.com` + RS256 + service account email（JWKS 地址可配，但 issuer 不可） | `admin-token-verifier.ts:57-75`、`createRuntimeTokenVerifier:171-180` | 要过这一关必须伪造「Google 身份」的 token（自建 JWKS + 自签 iss=google），本身又是一套要维护的脏设施 |
+| `/v1/admin/cell-heartbeat` 只在 `role === 'director'` 注册 | `app.ts:930-931` | combined 无法「给自己上报」，`relay_cell_runtime` 永远没有行 |
+
+→ **自托管只有 combined 一条路**。上游没把 combined 当生产模式打磨，所以 fork 必须自己补齐缺口，
+并在每次合并上游后核对补丁清单。
+
+### 当前 fork-local 补丁
+
+| # | 文件 | 改动 | 解决的问题 |
+| --- | --- | --- | --- |
+| 1 | `cloud/apps/relay/src/host-session-registry.ts`（host hello 校验，约 1621 行） | combined 保留 `assignmentEpoch === 1` 短路，其余 epoch 走 `verifyCellAssignment` 查库 | 第二次 assign 起 epoch ≥ 2，被 `4409 wrong assignment epoch` 永久拒绝 → 客户端「无法创建中继配对代码」，且重试只会把 epoch 推更高 |
+
+回归用例：`cloud/apps/relay/src/relay.blackbox.test.ts` →
+`admits a combined control whose re-assigned epoch moved past 1`。
+
+> 这个改动**不是放宽校验**：原来 combined 对 epoch=1 完全不查库（任意 host 只要凑 epoch=1 就过），
+> 改后 epoch > 1 必须库里有匹配的 assignment 行；保留 epoch=1 短路只是为了不破坏上游 staging 用法与既有测试。
+
+**合并上游后自检**：跑该用例 + `cd deploy && ./build.sh` 后确认 `grep -n "assignmentEpoch === 1" cloud/apps/relay/src/host-session-registry.ts` 仍带 `verifyCellAssignment` 兜底。
+
+### combined 下天然缺失的能力（知情即可，10 人规模不影响）
+
+- `/v1/regions` 恒空（无 cell 心跳 → `relay_cell_runtime` 无行）：客户端 region 探测/纠偏失效，assign 落到默认 `us-central1`。
+- `ORCA_RELAY_CELL_CONNECTION_HARD_CAP` 等连接硬上限不生效（依赖心跳上报的 telemetry）。
+- 滚动升级 / drain（4503）/ 跨区迁移（regional rehome）不可用。
+
+### 如果要真正对齐官方架构
+
+需要先给自托管补上「cell 身份」：①给 relay 增加基于共享密钥或自建 JWKS 的 cell 心跳认证；
+②让 `createGoogleServiceTokenVerifier` 接受可配置 issuer；③director 用 `ORCA_RELAY_CELLS_JSON` 声明 cell。
+属于中等规模改造，且收益（多 cell 隔离/滚动升级）对 10 人团队几乎为零 → 单独排期，不阻塞上线。
+
+---
+
 ## 1. 前置条件
 
 | 项 | 要求 |
