@@ -3,18 +3,18 @@
 # compose 不做本地编译——镜像名在 .env 的 ORCA_RELAY_IMAGE / ORCA_AUTH_IMAGE 配置。
 #
 # 命名约定（单仓库双 tag）：orca:relay / orca:auth 是滚动 tag；
-# 每次构建会额外打版本 tag orca:relay-v1.4.237 / orca:auth-v1.4.237，
+# 每次构建会额外打版本 tag orca:relay-v1.4.246 / orca:auth-v1.4.246，
 # 部署时钉版本 tag、回滚只需改 .env 的 tag。
 #
 # 用法（在 deploy/ 目录）：
 #   ./build.sh                          按 .env 里的镜像名构建（默认 orca:relay / orca:auth）
 #   ./build.sh --push                   构建并推送滚动 tag + 版本 tag（需先 docker login）
-#   ORCA_VERSION=1.4.238 ./build.sh     手动指定版本号（默认自动探测）
+#   ORCA_VERSION=1.4.247 ./build.sh     手动指定版本号（默认自动探测）
 #
 # 典型流程：
 #   本机构建 + 推送私有仓库：  .env 镜像名改为仓库地址 → ./build.sh --push → 服务器 docker compose up -d
 #   服务器直接构建：           服务器上 git clone 本仓库 → ./build.sh → docker compose up -d
-#   离线搬运：                 docker save orca:relay-v1.4.237 orca:auth-v1.4.237 | gzip > orca-images.tgz
+#   离线搬运：                 docker save orca:relay-v1.4.246 orca:auth-v1.4.246 | gzip > orca-images.tgz
 #                             服务器：gunzip -c orca-images.tgz | docker load
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -49,7 +49,7 @@ detect_version() {
 }
 VERSION="$(detect_version)"
 
-# orca:relay + 1.4.237 -> orca:relay-v1.4.237（镜像名带仓库前缀/端口也能正确拆分）
+# orca:relay + 1.4.246 -> orca:relay-v1.4.246（镜像名带仓库前缀/端口也能正确拆分）
 version_tag() {
   local image="$1" repo tag
   if [[ "${image##*/}" == *:* ]]; then
@@ -64,7 +64,7 @@ if [ -n "${VERSION}" ]; then
   RELAY_VERSION_IMAGE="$(version_tag "${RELAY_IMAGE}")"
   AUTH_VERSION_IMAGE="$(version_tag "${AUTH_IMAGE}")"
 else
-  echo "⚠ 未探测到版本号，跳过版本 tag（可用 ORCA_VERSION=1.4.237 ./build.sh 指定）" >&2
+  echo "⚠ 未探测到版本号，跳过版本 tag（可用 ORCA_VERSION=1.4.247 ./build.sh 指定）" >&2
 fi
 
 echo "==> 构建 auth 镜像：${AUTH_IMAGE}（上下文 auth/，无编译步骤）"

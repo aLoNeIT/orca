@@ -9,7 +9,7 @@
 # 国内构建可加：--build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 # ---------- Stage 1: 构建 relay ----------
-FROM node:24.22.1-alpine AS build
+FROM node:24.22.2-alpine AS build
 WORKDIR /app
 # pnpm 版本取自 cloud/package.json 的 packageManager（engines 要求 >=12）。
 # 不用 corepack：与官方 Dockerfile 一致，旧版 corepack 校验新版 pnpm 签名会失败。
@@ -29,7 +29,7 @@ COPY cloud/apps/relay apps/relay
 RUN pnpm --filter @orca-cloud/postgres-schema build && pnpm --filter @orca-cloud/relay-contract build && pnpm --filter @orca-cloud/relay build
 
 # ---------- Stage 2: 运行时 ----------
-FROM node:24.22.1-alpine
+FROM node:24.22.2-alpine
 WORKDIR /app
 RUN apk add --no-cache su-exec
 COPY --from=build /opt/pnpm /opt/pnpm

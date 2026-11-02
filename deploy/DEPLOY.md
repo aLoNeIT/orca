@@ -1,17 +1,17 @@
 # Orca 自托管部署手册（Runbook）
 
 > 适用：把 `relay + auth` 双容器部署到一台 Linux 服务器，10 人团队手机远程访问电脑。
-> 全部命令在 **`deploy/` 目录**下执行。本文件与 `docker-compose.yml` / `init.sh` / `build.sh` 同源同版本（提交 `4c569ea7`，relay 上游 v1.4.237 + 761 提交）。
+> 全部命令在 **`deploy/` 目录**下执行。本文件与 `docker-compose.yml` / `init.sh` / `build.sh` 同源同版本（提交 `c274069c07`，relay 上游 v1.4.246 + 2118 提交）。
 
 ---
 
-## 0. 现状核对（2026-10-22 实测）
+## 0. 现状核对（2026-11-02 实测）
 
 | 核对项 | 结果 |
 | --- | --- |
-| 代码基线 | `main @ 4c569ea7`（已合并上游 v1.4.237 及其后 761 个提交），工作区干净 |
+| 代码基线 | `main @ c274069c07`（已合并上游 v1.4.246 及其后 2118 个提交），工作区干净 |
 | 部署编排 | `deploy/` 13 个文件齐全，`docker compose config` 语法通过 |
-| 镜像 | 本机已有 `orca:relay`（243MB）/ `orca:auth`（172MB），另有版本 tag `orca:relay-v1.4.237` / `orca:auth-v1.4.237` |
+| 镜像 | 本机已重建 `orca:relay`（243MB）/ `orca:auth`（172MB），版本 tag `orca:relay-v1.4.246` / `orca:auth-v1.4.246`，并已推送 SWR |
 | 数据目录 | `deploy/data/{auth,relay}` 存在，SQLite + 签名密钥 + 交付存档可读 |
 | 本地容器 | `orca-relay-1` / `orca-auth-1` 已停止（演示验证完毕） |
 | 本地 `.env` | 仍是**演示配置**（`http://localhost:8080`），上服务器必须重新生成 |
@@ -85,8 +85,8 @@ cd /srv/orca/deploy
 ```bash
 # 1) 本地：镜像名写成仓库地址 + 版本 tag（单仓库双 tag：仓库名 orca 固定，tag 区分 relay/auth）
 #    deploy/.env
-#      ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:relay-v1.4.237
-#      ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:auth-v1.4.237
+#      ORCA_RELAY_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:relay-v1.4.246
+#      ORCA_AUTH_IMAGE=swr.cn-east-3.myhuaweicloud.com/xryf/orca:auth-v1.4.246
 
 # 2) 本地构建并推送（需先 docker login）
 cd deploy && ./build.sh --push
@@ -96,16 +96,16 @@ docker login swr.cn-east-3.myhuaweicloud.com
 cd /srv/orca/deploy && docker compose pull && docker compose up -d
 ```
 
-已推送版本（2026-10-26，可直接用）：
+已推送版本（2026-11-02，可直接用）：
 
 | 镜像 | digest |
 | --- | --- |
-| `.../xryf/orca:relay-v1.4.237` | `sha256:59574a88d7129720d2313ace33fc3a506aacee201f4d83a1ea6e32d8fe585443` |
-| `.../xryf/orca:auth-v1.4.237` | `sha256:16db05cce805a3b8684f257a0ac3726c8cac0f39fbc2329ec936a6a298198aad` |
+| `.../xryf/orca:relay-v1.4.246` | `sha256:f52f59f977c12cafd5b1237fb0d61d094a4314ce683d62122460fb490ea428fe` |
+| `.../xryf/orca:auth-v1.4.246` | `sha256:99be5e965273eae7d35fe6405c9ecdef1a3f4a777bafc4d6d5b2c73c4d9980e5` |
 
-> `auth` 已于 2026-10-26 重建覆盖（修复登录页 CSP `form-action` 阻断），relay 未变。
-> 精确引用可用 `.../xryf/orca:auth-v1.4.237.1`（同一 digest）；只改 auth 时执行
-> `docker compose pull auth && docker compose up -d auth` 即可，不必全量拉取。
+> 本次两个镜像同时重建（relay 跨 9 个小版本：v1.4.237 → v1.4.246；auth 新增 `/v1/desktop/auth/connector-token`，
+> 供桌面端 cloud connector 安装使用）。只改其中一个时执行 `docker compose pull auth && docker compose up -d auth`，
+> 不必全量拉取。
 
 > 滚动 tag `.../xryf/orca:relay` / `.../xryf/orca:auth` 同步在仓库里，指向同一次构建；部署请用版本 tag。
 
@@ -133,13 +133,13 @@ cd /srv/orca/deploy && ./build.sh        # 需要完整仓库（含 cloud/）
 
 ```bash
 # 本地
-docker save orca:relay-v1.4.237 orca:auth-v1.4.237 | gzip > orca-images.tgz
+docker save orca:relay-v1.4.246 orca:auth-v1.4.246 | gzip > orca-images.tgz
 scp orca-images.tgz root@server:/srv/orca/
 # 服务器
 gunzip -c orca-images.tgz | docker load
 ```
 
-> 三种方式都建议用**版本 tag**（`orca:relay-v1.4.237` 而不是 `orca:relay`）：回滚就是 `.env` 改回旧 tag + `up -d`，代码不用动。
+> 三种方式都建议用**版本 tag**（`orca:relay-v1.4.246` 而不是 `orca:relay`）：回滚就是 `.env` 改回旧 tag + `up -d`，代码不用动。
 > 服务器自建镜像和本地镜像**不保证逐字节相同**（依赖解析、基础镜像浮动），所以「本地验过再推仓库」比「服务器现场编译」更可控。
 
 ---

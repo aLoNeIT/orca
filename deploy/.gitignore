@@ -3,3 +3,7 @@
 # 运行数据目录（ORCA_DATA_DIR 的默认位置）：
 # 两个 SQLite 库 / auth 签名密钥 —— 属运行时数据，绝不入库。
 data/
+# compose E2E 冒烟用的临时数据目录（container-smoke.mjs 产生）
+data-smoke/
+# 冒烟测试写出的端口 override
+docker-compose.smoke.yml
